@@ -7,7 +7,6 @@
 """Automatic speech recognition model training script."""
 
 import logging
-import multiprocessing as mp
 import os
 import random
 import subprocess
@@ -179,9 +178,6 @@ def get_parser(parser=None, required=True):
     # decoder related
     parser.add_argument('--context-residual', default=False, type=strtobool, nargs='?',
                         help='The flag to switch to use context vector residual in the decoder network')
-    parser.add_argument('--replace-sos', default=False, nargs='?',
-                        help='Replace <sos> in the decoder with a target language ID \
-                              (the first token in the target sequence)')
     # finetuning related
     parser.add_argument('--enc-init', default=None, type=str,
                         help='Pre-trained ASR model to initialize encoder.')
@@ -371,10 +367,4 @@ def main(cmd_args):
 
 
 if __name__ == '__main__':
-    # NOTE(kan-bayashi): setting multiple times causes RuntimeError
-    #   See also https://github.com/pytorch/pytorch/issues/3492
-    try:
-        mp.set_start_method('spawn')
-    except RuntimeError:
-        pass
     main(sys.argv[1:])
