@@ -52,7 +52,7 @@ def get_parser(parser=None, required=True):
                         help='Output directory')
     parser.add_argument('--debugmode', default=1, type=int,
                         help='Debugmode')
-    parser.add_argument('--dict', required=required,
+    parser.add_argument('--dict', required=False,
                         help='Dictionary')
     parser.add_argument('--seed', default=1, type=int,
                         help='Random seed')

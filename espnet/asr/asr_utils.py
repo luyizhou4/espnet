@@ -569,13 +569,15 @@ def parse_hypothesis(hyp, char_list):
     """
     # remove sos and get results
     tokenid_as_list = list(map(int, hyp['yseq'][1:]))
-    token_as_list = [char_list[idx] for idx in tokenid_as_list]
+    # token_as_list = [char_list[idx] for idx in tokenid_as_list]
+    token_as_list = [str(idx) for idx in tokenid_as_list]
     score = float(hyp['score'])
 
     # convert to string
     tokenid = " ".join([str(idx) for idx in tokenid_as_list])
     token = " ".join(token_as_list)
-    text = "".join(token_as_list).replace('<space>', ' ')
+    # text = "".join(token_as_list).replace('<space>', ' ')
+    text = " ".join(token_as_list).replace('<space>', ' ') # to show in decode.log
 
     return text, token, tokenid, score
 
