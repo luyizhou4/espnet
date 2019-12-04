@@ -34,7 +34,7 @@ def savefig(plot, filename):
     plt.clf()
 
 
-def plot_multi_head_attention(data, attn_dict, outdir, suffix="png", savefn=savefig):
+def plot_multi_head_attention(data, attn_dict, outdir, suffix="png", savefn=savefig, srcatt_mode=False):
     """Plot multi head attentions
 
     :param dict data: utts info from json file
@@ -43,9 +43,12 @@ def plot_multi_head_attention(data, attn_dict, outdir, suffix="png", savefn=save
     :param str outdir: dir to save fig
     :param str suffix: filename suffix including image type (e.g., png)
     :param savefn: function to save
+    :srcatt_mode: only plot src attention
     """
     for name, att_ws in attn_dict.items():
         for idx, att_w in enumerate(att_ws):
+            if srcatt_mode and not 'src_attn' in name:
+                continue
             filename = "%s/%s.%s.%s" % (
                 outdir, data[idx][0], name, suffix)
             dec_len = int(data[idx][1]['output'][0]['shape'][0])
@@ -70,7 +73,7 @@ class PlotAttentionReport(asr_utils.PlotAttentionReport):
     def __call__(self, trainer):
         attn_dict = self.get_attention_weights()
         suffix = "ep.{.updater.epoch}.png".format(trainer)
-        self.plotfn(self.data, attn_dict, self.outdir, suffix, savefig)
+        self.plotfn(self.data, attn_dict, self.outdir, suffix, savefig, self.srcatt_mode)
 
     def get_attention_weights(self):
         batch = self.converter([self.transform(self.data)], self.device)

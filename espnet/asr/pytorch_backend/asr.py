@@ -361,13 +361,13 @@ def train(args):
     # specify attention, CTC, hybrid mode
     if args.mtlalpha == 1.0:
         mtl_mode = 'ctc'
-        logging.info('Pure CTC mode')
+        logging.warning('Pure CTC mode')
     elif args.mtlalpha == 0.0:
         mtl_mode = 'att'
-        logging.info('Pure attention mode')
+        logging.warning('Pure attention mode')
     else:
         mtl_mode = 'mtl'
-        logging.info('Multitask learning mode')
+        logging.warning('Multitask learning mode, alpha %f'%(args.mtlalpha))
 
     if (args.enc_init is not None or args.dec_init is not None) and args.num_encs == 1:
         model = load_trained_modules(idim_list[0], odim, args)
@@ -539,8 +539,10 @@ def train(args):
             plot_class = model.attention_plot_class
         att_reporter = plot_class(
             att_vis_fn, data, args.outdir + "/att_ws",
-            converter=converter, transform=load_cv, device=device)
-        trainer.extend(att_reporter, trigger=(1, 'epoch'))
+            converter=converter, transform=load_cv, device=device, srcatt_mode=args.srcatt_mode)
+        # in current setup, transformer usually takes hundreds of epochs for convergence,
+        # so save attention at 10 epoch interval
+        trainer.extend(att_reporter, trigger=(10, 'epoch')) 
     else:
         att_reporter = None
 

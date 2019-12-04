@@ -121,6 +121,11 @@ def get_parser():
                         help='Onset margin')
     parser.add_argument('--streaming-offset-margin', type=int, default=1,
                         help='Offset margin')
+
+    # yzl23 setups
+    parser.add_argument('--ctc-greedy-decoding', type=strtobool,
+                        default=False,
+                        help='ctc greedy decoding, not use ctc-prefix-search')
     return parser
 
 

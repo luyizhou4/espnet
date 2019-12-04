@@ -237,6 +237,26 @@ class E2E(ASRInterface, torch.nn.Module):
         return enc_output.squeeze(0)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
+        if recog_args.ctc_greedy_decoding:
+            return self.recognize_ctc_greedy(x, recog_args)
+        else:
+            return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
+
+    def recognize_ctc_greedy(self, x, recog_args):
+        """Recognize input speech with ctc greedy decoding.
+
+        :param ndnarray x: input acoustic feature (B, T, D) or (T, D)
+        :param Namespace recog_args: argment Namespace contraining options
+        :return: N-best decoding results (fake results for compatibility)
+        :rtype: list
+        """
+        pass
+        hyp = {'score': 0.0, 'yseq': [y]}
+        # add <eos>
+
+
+
+    def recognize_jca(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         """Recognize input speech.
 
         :param ndnarray x: input acoustic feature (B, T, D) or (T, D)

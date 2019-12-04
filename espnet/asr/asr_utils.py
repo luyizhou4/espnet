@@ -92,11 +92,12 @@ class PlotAttentionReport(extension.Extension):
         iaxis (int): Dimension to access input (for ASR iaxis=0, for MT iaxis=1.)
         okey (str): Key to access output (for ASR okey="input", MT okay="output".)
         oaxis (int): Dimension to access output (for ASR oaxis=0, for MT oaxis=0.)
+        srcatt_mode (bool): only plot src attention (only for transformer usage)
 
     """
 
     def __init__(self, att_vis_fn, data, outdir, converter, transform, device, reverse=False,
-                 ikey="input", iaxis=0, okey="output", oaxis=0):
+                 ikey="input", iaxis=0, okey="output", oaxis=0, srcatt_mode=False):
         self.att_vis_fn = att_vis_fn
         self.data = copy.deepcopy(data)
         self.outdir = outdir
@@ -108,6 +109,7 @@ class PlotAttentionReport(extension.Extension):
         self.iaxis = iaxis
         self.okey = okey
         self.oaxis = oaxis
+        self.srcatt_mode = srcatt_mode
         if not os.path.exists(self.outdir):
             os.makedirs(self.outdir)
 

@@ -262,6 +262,12 @@ def get_parser(parser=None, required=True):
                         help='')
     parser.add_argument('--fbank-fmax', type=float, default=None,
                         help='')
+
+    # yzl23 setup
+    parser.add_argument('--srcatt-mode', type=strtobool, default=True,
+                        help='only plot src attention')
+
+
     return parser
 
 
