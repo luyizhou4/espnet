@@ -266,7 +266,9 @@ def get_parser(parser=None, required=True):
     # yzl23 setup
     parser.add_argument('--srcatt-mode', type=strtobool, default=True,
                         help='only plot src attention')
-
+    parser.add_argument('--snapshots-num-keeps', type=int, default=10,
+                        help='number of snapshots to keep, note that in average_checkpoints.py, \
+                        NOTE that currently our setup averages last N snapshots, rather than N-best snapshots.')
 
     return parser
 

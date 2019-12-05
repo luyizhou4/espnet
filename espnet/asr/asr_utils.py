@@ -398,6 +398,34 @@ def _torch_snapshot_object(trainer, target, filename, savefun):
     finally:
         shutil.rmtree(tmpdir)
 
+def torch_snapshot_cleanup(snapshots_num_keeps=10):
+    """Extension to cleanup 'old' snapshot of the trainer for pytorch, only cleanup snapshot.ep.#epoch.
+
+    Returns:
+        An extension function.
+
+    """
+    @extension.make_extension(trigger=(1, 'epoch'), priority=-200)
+    def torch_snapshot_cleanup(trainer):
+        assert snapshots_num_keeps > 0
+        _torch_snapshot_cleanup_object(trainer, snapshots_num_keeps)
+
+    return torch_snapshot_cleanup
+
+def _torch_snapshot_cleanup_object(trainer, snapshots_num_keeps):
+    current_ep = trainer.updater.epoch # start from 1
+    logging.warning("current epoch: %d"%(current_ep))
+    logging.warning(trainer.out)
+    head_ep = (current_ep - snapshots_num_keeps + 1) if (current_ep - snapshots_num_keeps + 1) > 0 else 1
+    epochs_list_to_keep = ['snapshot.ep.%d'%(i) for i in range(head_ep, head_ep + 1)]
+    # check snapshots files in restore_dir
+    for filename in os.listdir(trainer.out):
+        if ("snapshot.ep" in filename) and (os.path.basename(filename) not in epochs_list_to_keep):
+            # cleanup this snapshot
+            logging.warning("cleanup file %s, for #snapshots_num_keeps=%d"%(os.path.join(trainer.out, filename), snapshots_num_keeps))
+            os.remove(os.path.join(trainer.out, filename))
+
+
 
 def add_gradient_noise(model, iteration, duration=100, eta=1.0, scale_factor=0.55):
     """Adds noise from a standard normal distribution to the gradients.
@@ -634,9 +662,9 @@ def add_results_to_json(js, nbest_hyps, char_list):
 
 
 def plot_spectrogram(plt, spec, mode='db', fs=None, frame_shift=None,
-                     bottom=True, left=True, right=True, top=False,
-                     labelbottom=True, labelleft=True, labelright=True,
-                     labeltop=False, cmap='inferno'):
+    bottom=True, left=True, right=True, top=False,
+    labelbottom=True, labelleft=True, labelright=True,
+    labeltop=False, cmap='inferno'):
     """Plot spectrogram using matplotlib.
 
     Args:

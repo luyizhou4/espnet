@@ -32,7 +32,7 @@ from espnet.asr.asr_utils import restore_snapshot
 from espnet.asr.asr_utils import snapshot_object
 from espnet.asr.asr_utils import torch_load
 from espnet.asr.asr_utils import torch_resume
-from espnet.asr.asr_utils import torch_snapshot
+from espnet.asr.asr_utils import torch_snapshot, torch_snapshot_cleanup
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_modules
 import espnet.lm.pytorch_backend.extlm as extlm_pytorch
@@ -381,7 +381,7 @@ def train(args):
         rnnlm = lm_pytorch.ClassifierWithState(
             lm_pytorch.RNNLM(
                 len(args.char_list), rnnlm_args.layer, rnnlm_args.unit))
-        torch.load(args.rnnlm, rnnlm)
+        torch_load(args.rnnlm, rnnlm)
         model.rnnlm = rnnlm
 
     # write model config
@@ -577,6 +577,8 @@ def train(args):
                        trigger=(args.save_interval_iters, 'iteration'))
     else:
         trainer.extend(torch_snapshot(), trigger=(1, 'epoch'))
+        # clean up snapshots that are 'too old'
+        trainer.extend(torch_snapshot_cleanup(args.snapshots_num_keeps), trigger=(1, 'epoch'))
 
     # epsilon decay in the optimizer
     if args.opt == 'adadelta':
