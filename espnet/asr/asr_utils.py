@@ -414,16 +414,18 @@ def torch_snapshot_cleanup(snapshots_num_keeps=10):
 
 def _torch_snapshot_cleanup_object(trainer, snapshots_num_keeps):
     current_ep = trainer.updater.epoch # start from 1
-    logging.warning("current epoch: %d"%(current_ep))
-    logging.warning(trainer.out)
     head_ep = (current_ep - snapshots_num_keeps + 1) if (current_ep - snapshots_num_keeps + 1) > 0 else 1
-    epochs_list_to_keep = ['snapshot.ep.%d'%(i) for i in range(head_ep, head_ep + 1)]
+    snapshots_list_to_keep = ['snapshot.ep.%d'%(i) for i in range(head_ep, current_ep + 1)]
     # check snapshots files in restore_dir
+    remove_list = []
     for filename in os.listdir(trainer.out):
-        if ("snapshot.ep" in filename) and (os.path.basename(filename) not in epochs_list_to_keep):
-            # cleanup this snapshot
-            logging.warning("cleanup file %s, for #snapshots_num_keeps=%d"%(os.path.join(trainer.out, filename), snapshots_num_keeps))
-            os.remove(os.path.join(trainer.out, filename))
+        if ("snapshot.ep" in filename) and (filename not in snapshots_list_to_keep):
+            remove_list.append(os.path.join(trainer.out, filename))
+    
+    for snapshot_to_remove in remove_list:        
+        # cleanup this snapshot
+        logging.warning("cleanup file %s, for #snapshots_num_keeps=%d"%(snapshot_to_remove, snapshots_num_keeps))
+        os.remove(snapshot_to_remove)
 
 
 
