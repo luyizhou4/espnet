@@ -143,6 +143,9 @@ class E2E(ASRInterface, torch.nn.Module):
             self.error_calculator = None
         self.rnnlm = None
 
+        # yzl23 config
+        self.remove_blank_in_ctc_mode = True
+
     def reset_parameters(self, args):
         """Initialize parameters."""
         # initialize parameters
@@ -232,9 +235,9 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: torch.Tensor
         """
         self.eval()
-        x = torch.as_tensor(x).unsqueeze(0)
+        x = torch.as_tensor(x).unsqueeze(0) # (B, T, D) with #B=1
         enc_output, _ = self.encoder(x, None)
-        return enc_output.squeeze(0)
+        return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         if recog_args.ctc_greedy_decoding:
@@ -250,11 +253,26 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results (fake results for compatibility)
         :rtype: list
         """
-        pass
-        hyp = {'score': 0.0, 'yseq': [y]}
-        # add <eos>
+        enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
+        lpz = self.ctc.log_softmax(enc_output)
+        lpz = lpz.squeeze(0) # shape of (T, D)
+        idx = lpz.argmax(-1).cpu().numpy().tolist()
+        hyp = {}
+        logging.info(hyp['yseq'])
+        hyp['yseq'] = [self.sos] + self.ctc_mapping(idx)
+        hyp['score'] = -1
 
 
+        return [hyp]
+
+    def ctc_mapping(self, x, blank=0):
+        prev = blank
+        y = []
+        for i in x:
+            if i != blank and i != prev:
+                y.append(i)
+            prev = i
+        return y
 
     def recognize_jca(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         """Recognize input speech.
@@ -266,14 +284,14 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0)
+        enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
         if recog_args.ctc_weight > 0.0:
             lpz = self.ctc.log_softmax(enc_output)
-            lpz = lpz.squeeze(0)
+            lpz = lpz.squeeze(0) # shape of (T, D)
         else:
             lpz = None
 
-        h = enc_output.squeeze(0)
+        h = enc_output.squeeze(0) # (B, T, D), #B=1
 
         logging.info('input lengths: ' + str(h.size(0)))
         # search parms
@@ -312,7 +330,10 @@ class E2E(ASRInterface, torch.nn.Module):
                 from espnet.nets.pytorch_backend.rnn.decoders import CTC_SCORING_RATIO
                 ctc_beam = min(lpz.shape[-1], int(beam * CTC_SCORING_RATIO))
             else:
-                ctc_beam = lpz.shape[-1]
+                if self.remove_blank_in_ctc_mode:
+                    ctc_beam = lpz.shape[-1] - 1 # except blank
+                else:
+                    ctc_beam = lpz.shape[-1]
         hyps = [hyp]
         ended_hyps = []
 
@@ -327,7 +348,7 @@ class E2E(ASRInterface, torch.nn.Module):
                 vy[0] = hyp['yseq'][i]
 
                 # get nbest local scores and their ids
-                ys_mask = subsequent_mask(i + 1).unsqueeze(0)
+                ys_mask = subsequent_mask(i + 1).unsqueeze(0) # mask scores of future state
                 ys = torch.tensor(hyp['yseq']).unsqueeze(0)
                 # FIXME: jit does not match non-jit result
                 if use_jit:
@@ -337,7 +358,6 @@ class E2E(ASRInterface, torch.nn.Module):
                     local_att_scores = traced_decoder(ys, ys_mask, enc_output)[0]
                 else:
                     local_att_scores = self.decoder.forward_one_step(ys, ys_mask, enc_output)[0]
-
                 if rnnlm:
                     rnnlm_state, local_lm_scores = rnnlm.predict(hyp['rnnlm_prev'], vy)
                     local_scores = local_att_scores + recog_args.lm_weight * local_lm_scores
@@ -345,8 +365,15 @@ class E2E(ASRInterface, torch.nn.Module):
                     local_scores = local_att_scores
 
                 if lpz is not None:
-                    local_best_scores, local_best_ids = torch.topk(
-                        local_att_scores, ctc_beam, dim=1)
+                    if self.remove_blank_in_ctc_mode:
+                        # here we need to filter out <blank> in local_best_ids
+                        # it happens in pure ctc-mode, when ctc_beam equals to #vocab
+                        local_best_scores, local_best_ids = torch.topk(
+                            local_att_scores[:, 1:], ctc_beam, dim=1)
+                        local_best_ids += 1 # hack 
+                    else:
+                        local_best_scores, local_best_ids = torch.topk(
+                            local_att_scores, ctc_beam, dim=1)
                     ctc_scores, ctc_states = ctc_prefix_score(
                         hyp['yseq'], local_best_ids[0], hyp['ctc_state_prev'])
                     local_scores = \

@@ -139,7 +139,6 @@ class Decoder(ScorerInterface, torch.nn.Module):
         for c, decoder in zip(cache, self.decoders):
             x, tgt_mask, memory, memory_mask = decoder(x, tgt_mask, memory, None, cache=c)
             new_cache.append(x)
-
         if self.normalize_before:
             y = self.after_norm(x[:, -1])
         else:

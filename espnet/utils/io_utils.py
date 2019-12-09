@@ -188,7 +188,7 @@ class LoadInputsAndTargets(object):
         :rtype: Tuple[OrderedDict, List[str]]
         """
         # handle single-input and multi-input (paralell) asr mode
-        xs = list(x_feats_dict.values())
+        xs = list(x_feats_dict.values()) # [[feats], [feats] ...[feats]]
 
         if self.load_output:
             if len(y_feats_dict) == 1:
