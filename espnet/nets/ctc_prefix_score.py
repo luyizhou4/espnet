@@ -252,6 +252,7 @@ class CTCPrefixScore(object):
         else:
             log_phi = r_sum
 
+        # log_phi is newLabelProb in Graves' paper, log_psi is prefixProb
         # compute forward probabilities log(r_t^n(h)), log(r_t^b(h)),
         # and log prefix probabilites log(psi)
         start = max(output_length, 1)

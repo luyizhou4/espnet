@@ -476,6 +476,8 @@ PartialScorerInterface	espnet/nets/scorers/ctc.py	/^from espnet.nets.scorer_inte
 Path	espnet/utils/cli_writers.py	/^from pathlib import Path$/;"	i
 Path	utils/change_yaml.py	/^from pathlib import Path$/;"	i
 Path	utils/eval-source-separation.py	/^from pathlib import Path$/;"	i
+PerturbSamplingEnabler	espnet/asr/pytorch_backend/asr.py	/^from espnet.utils.training.iterators import ShufflingEnabler, PerturbSamplingEnabler$/;"	i
+PerturbSamplingEnabler	espnet/utils/training/iterators.py	/^class PerturbSamplingEnabler(Extension):$/;"	c
 PlotAttentionReport	espnet/asr/asr_mix_utils.py	/^class PlotAttentionReport(extension.Extension):$/;"	c
 PlotAttentionReport	espnet/asr/asr_utils.py	/^class PlotAttentionReport(extension.Extension):$/;"	c
 PlotAttentionReport	espnet/nets/asr_interface.py	/^        from espnet.asr.asr_utils import PlotAttentionReport$/;"	i
@@ -562,7 +564,7 @@ SequentialRNNLM	espnet/nets/pytorch_backend/lm/seq_rnn.py	/^class SequentialRNNL
 SerialIterator	espnet/utils/training/iterators.py	/^from chainer.iterators import SerialIterator$/;"	i
 ShuffleOrderSampler	espnet/utils/training/iterators.py	/^from chainer.iterators import ShuffleOrderSampler$/;"	i
 ShufflingEnabler	espnet/asr/chainer_backend/asr.py	/^from espnet.utils.training.iterators import ShufflingEnabler$/;"	i
-ShufflingEnabler	espnet/asr/pytorch_backend/asr.py	/^from espnet.utils.training.iterators import ShufflingEnabler$/;"	i
+ShufflingEnabler	espnet/asr/pytorch_backend/asr.py	/^from espnet.utils.training.iterators import ShufflingEnabler, PerturbSamplingEnabler$/;"	i
 ShufflingEnabler	espnet/asr/pytorch_backend/asr_mix.py	/^from espnet.utils.training.iterators import ShufflingEnabler$/;"	i
 ShufflingEnabler	espnet/lm/chainer_backend/lm.py	/^from espnet.utils.training.iterators import ShufflingEnabler$/;"	i
 ShufflingEnabler	espnet/lm/pytorch_backend/lm.py	/^from espnet.utils.training.iterators import ShufflingEnabler$/;"	i
@@ -634,6 +636,7 @@ TransformDataset	espnet/mt/pytorch_backend/mt.py	/^from espnet.utils.dataset imp
 TransformDataset	espnet/st/pytorch_backend/st.py	/^from espnet.utils.dataset import TransformDataset$/;"	i
 TransformDataset	espnet/tts/pytorch_backend/tts.py	/^from espnet.utils.dataset import TransformDataset$/;"	i
 TransformDataset	espnet/utils/dataset.py	/^class TransformDataset(torch.utils.data.Dataset):$/;"	c
+TransformDataset	espnet/utils/training/iterators.py	/^from espnet.utils.dataset import TransformDataset$/;"	i
 TransformInterface	espnet/transform/functional.py	/^from espnet.transform.transform_interface import TransformInterface$/;"	i
 TransformInterface	espnet/transform/transform_interface.py	/^class TransformInterface:$/;"	c
 Transformation	espnet/asr/pytorch_backend/asr.py	/^from espnet.transform.transformation import Transformation$/;"	i
@@ -753,6 +756,7 @@ __call__	espnet/transform/wpe.py	/^    def __call__(self, xs):$/;"	m	class:WPE	f
 __call__	espnet/tts/pytorch_backend/tts.py	/^    def __call__(self, batch, device=torch.device('cpu')):$/;"	m	class:CustomConverter	file:
 __call__	espnet/utils/io_utils.py	/^    def __call__(self, batch):$/;"	m	class:LoadInputsAndTargets	file:
 __call__	espnet/utils/training/evaluator.py	/^    def __call__(self, trainer=None):$/;"	m	class:BaseEvaluator	file:
+__call__	espnet/utils/training/iterators.py	/^    def __call__(self, trainer):$/;"	m	class:PerturbSamplingEnabler	file:
 __call__	espnet/utils/training/iterators.py	/^    def __call__(self, trainer):$/;"	m	class:ShufflingEnabler	file:
 __call__	espnet/utils/training/tensorboard_logger.py	/^    def __call__(self, trainer):$/;"	m	class:TensorboardLogger	file:
 __call__	test/test_optimizer.py	/^    def __call__(self, x):$/;"	m	class:ChModel	file:
@@ -957,6 +961,7 @@ __init__	espnet/utils/io_utils.py	/^    def __init__(self, mode='asr',$/;"	m	cla
 __init__	espnet/utils/training/iterators.py	/^    def __init__(self, dataset, batch_size, repeat=True, shuffle=True):$/;"	m	class:ToggleableShufflingSerialIterator
 __init__	espnet/utils/training/iterators.py	/^    def __init__(self, dataset, batch_size, repeat=True, shuffle=True, n_processes=None, n_prefetch=1, shared_mem=None,$/;"	m	class:ToggleableShufflingMultiprocessIterator
 __init__	espnet/utils/training/iterators.py	/^    def __init__(self, iterators):$/;"	m	class:ShufflingEnabler
+__init__	espnet/utils/training/iterators.py	/^    def __init__(self, train_iter, train_json, load_tr, converter, args):$/;"	m	class:PerturbSamplingEnabler
 __init__	espnet/utils/training/tensorboard_logger.py	/^    def __init__(self, logger, att_reporter=None, entries=None, epoch=0):$/;"	m	class:TensorboardLogger
 __init__	test/test_optimizer.py	/^    def __init__(self):$/;"	m	class:ChModel
 __init__	test/test_optimizer.py	/^    def __init__(self):$/;"	m	class:ThModel
@@ -1174,6 +1179,7 @@ _symbols_to_sequence	egs/tweb/tts1/local/text/__init__.py	/^def _symbols_to_sequ
 _target_mask	espnet/nets/pytorch_backend/e2e_tts_transformer.py	/^    def _target_mask(self, olens):$/;"	m	class:Transformer
 _target_mask	espnet/nets/pytorch_backend/lm/transformer.py	/^    def _target_mask(self, ys_in_pad):$/;"	m	class:TransformerLM
 _time_to_str	utils/trim_silence.py	/^def _time_to_str(time_idx):$/;"	f
+_torch_snapshot_cleanup_object	espnet/asr/asr_utils.py	/^def _torch_snapshot_cleanup_object(trainer, snapshots_num_keeps):$/;"	f
 _torch_snapshot_object	espnet/asr/asr_utils.py	/^def _torch_snapshot_object(trainer, target, filename, savefun):$/;"	f
 _transfer_from_teacher	espnet/nets/pytorch_backend/e2e_tts_fastspeech.py	/^    def _transfer_from_teacher(self, transferred_encoder_module):$/;"	m	class:FeedForwardTransformer
 _update_value	espnet/nets/chainer_backend/transformer/training.py	/^    def _update_value(self, optimizer, value):$/;"	m	class:VaswaniRule
@@ -1504,7 +1510,7 @@ basic_cleaners	egs/ljspeech/tts2/local/text/cleaners.py	/^def basic_cleaners(tex
 basic_cleaners	egs/tweb/tts1/local/text/cleaners.py	/^def basic_cleaners(text):$/;"	f
 batchfy_by_bin	espnet/utils/training/batchfy.py	/^def batchfy_by_bin(sorted_data, batch_bins, num_batches=0, min_batch_size=1, shortest_first=False,$/;"	f
 batchfy_by_frame	espnet/utils/training/batchfy.py	/^def batchfy_by_frame(sorted_data, max_frames_in, max_frames_out, max_frames_inout,$/;"	f
-batchfy_by_seq	espnet/utils/training/batchfy.py	/^def batchfy_by_seq($/;"	f
+batchfy_by_seq	espnet/utils/training/batchfy.py	/^def batchfy_by_seq(sorted_data, batch_size, max_length_in, max_length_out,$/;"	f
 batchfy_shuffle	espnet/utils/training/batchfy.py	/^def batchfy_shuffle(data, batch_size, min_batch_size, num_batches, shortest_first):$/;"	f
 beam_search	espnet/nets/beam_search.py	/^def beam_search(x: torch.Tensor, sos: int, eos: int, beam_size: int, vocab_size: int,$/;"	f
 beam_search	test/test_lm.py	/^from espnet.nets.beam_search import beam_search$/;"	i
@@ -1837,6 +1843,7 @@ ctc_for	espnet/nets/pytorch_backend/ctc.py	/^def ctc_for(args, odim, reduce=True
 ctc_for	espnet/nets/pytorch_backend/e2e_asr.py	/^from espnet.nets.pytorch_backend.ctc import ctc_for$/;"	i
 ctc_for	espnet/nets/pytorch_backend/e2e_asr_mix.py	/^from espnet.nets.pytorch_backend.ctc import ctc_for$/;"	i
 ctc_for	espnet/nets/pytorch_backend/e2e_asr_mulenc.py	/^from espnet.nets.pytorch_backend.ctc import ctc_for$/;"	i
+ctc_mapping	espnet/nets/pytorch_backend/e2e_asr_transformer.py	/^    def ctc_mapping(self, x, blank=0):$/;"	m	class:E2E
 ctc_type	test/test_beam_search.py	/^    ctc_type="warpctc",$/;"	v
 ctc_type	test/test_initialization.py	/^    ctc_type="warpctc",$/;"	v
 ctc_weight	test/test_beam_search.py	/^    ctc_weight=0.2,$/;"	v
@@ -2047,9 +2054,10 @@ end_detect	espnet/nets/beam_search.py	/^from espnet.nets.e2e_asr_common import e
 end_detect	espnet/nets/chainer_backend/e2e_asr_transformer.py	/^            from espnet.nets.e2e_asr_common import end_detect$/;"	i
 end_detect	espnet/nets/chainer_backend/rnn/decoders.py	/^from espnet.nets.e2e_asr_common import end_detect$/;"	i
 end_detect	espnet/nets/e2e_asr_common.py	/^def end_detect(ended_hyps, i, M=3, D_end=np.log(1 * np.exp(-10))):$/;"	f
-end_detect	espnet/nets/pytorch_backend/e2e_asr_transformer.py	/^            from espnet.nets.e2e_asr_common import end_detect$/;"	i
 end_detect	espnet/nets/pytorch_backend/e2e_st_transformer.py	/^            from espnet.nets.e2e_asr_common import end_detect$/;"	i
 end_detect	espnet/nets/pytorch_backend/rnn/decoders.py	/^from espnet.nets.e2e_asr_common import end_detect$/;"	i
+end_detect_yzl23	espnet/nets/e2e_asr_common.py	/^def end_detect_yzl23(ended_hyps, remained_hyps, penalty):$/;"	f
+end_detect_yzl23	espnet/nets/pytorch_backend/e2e_asr_transformer.py	/^            from espnet.nets.e2e_asr_common import end_detect_yzl23$/;"	i
 end_time	egs/chime5/asr1/local/json2text.py	/^            end_time = hms_to_seconds(end_time)$/;"	v
 end_time	egs/chime5/asr1/local/json2text.py	/^            end_time = x['end_time'][mictype]$/;"	v
 english_cleaners	egs/arctic/tts1/local/text/cleaners.py	/^def english_cleaners(text):$/;"	f
@@ -3055,6 +3063,7 @@ logging	espnet/utils/deterministic_utils.py	/^import logging$/;"	i
 logging	espnet/utils/fill_missing_args.py	/^import logging$/;"	i
 logging	espnet/utils/io_utils.py	/^import logging$/;"	i
 logging	espnet/utils/training/batchfy.py	/^import logging$/;"	i
+logging	espnet/utils/training/iterators.py	/^import logging$/;"	i
 logging	espnet/utils/training/train_utils.py	/^import logging$/;"	i
 logging	test/test_e2e_asr_transformer.py	/^import logging$/;"	i
 logging	test/test_e2e_st_transformer.py	/^import logging$/;"	i
@@ -3205,6 +3214,7 @@ make_batchset	espnet/mt/pytorch_backend/mt.py	/^from espnet.utils.training.batch
 make_batchset	espnet/st/pytorch_backend/st.py	/^from espnet.utils.training.batchfy import make_batchset$/;"	i
 make_batchset	espnet/tts/pytorch_backend/tts.py	/^from espnet.utils.training.batchfy import make_batchset$/;"	i
 make_batchset	espnet/utils/training/batchfy.py	/^def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out=float("inf"),$/;"	f
+make_batchset	espnet/utils/training/iterators.py	/^from espnet.utils.training.batchfy import make_batchset$/;"	i
 make_batchset	test/test_e2e_asr.py	/^from espnet.utils.training.batchfy import make_batchset$/;"	i
 make_batchset	test/test_e2e_asr_mulenc.py	/^from espnet.utils.training.batchfy import make_batchset$/;"	i
 make_batchset	test/test_e2e_mt.py	/^from espnet.utils.training.batchfy import make_batchset$/;"	i
@@ -3707,6 +3717,7 @@ penalty	test/test_beam_search.py	/^    penalty=0.5,$/;"	v
 penalty	test/test_initialization.py	/^    penalty=0.5,$/;"	v
 permutationDFS	utils/eval_perm_free_error.py	/^def permutationDFS(source, start, res):$/;"	f
 permutation_schemes	utils/eval_perm_free_error.py	/^def permutation_schemes(num_spkrs):$/;"	f
+perturb_sampling_shuffle	espnet/utils/dataset.py	/^    def perturb_sampling_shuffle(self, dataset):$/;"	m	class:ChainerDataLoader
 phi	espnet/utils/spec_augment.py	/^def phi(r, order):$/;"	f
 pip	setup.py	/^import pip$/;"	i
 pit_process	espnet/nets/pytorch_backend/e2e_asr_mix.py	/^    def pit_process(self, losses):$/;"	m	class:PIT
@@ -3716,7 +3727,7 @@ platform	espnet/bin/tts_decode.py	/^import platform$/;"	i
 plot	test/test_e2e_asr_transformer.py	/^        from espnet.nets.pytorch_backend.transformer import plot$/;"	i
 plot	test/test_e2e_st_transformer.py	/^        from espnet.nets.pytorch_backend.transformer import plot$/;"	i
 plot_multi_head_attention	espnet/nets/chainer_backend/transformer/plot.py	/^def plot_multi_head_attention(data, attn_dict, outdir, suffix="png", savefn=savefig):$/;"	f
-plot_multi_head_attention	espnet/nets/pytorch_backend/transformer/plot.py	/^def plot_multi_head_attention(data, attn_dict, outdir, suffix="png", savefn=savefig):$/;"	f
+plot_multi_head_attention	espnet/nets/pytorch_backend/transformer/plot.py	/^def plot_multi_head_attention(data, attn_dict, outdir, suffix="png", savefn=savefig, srcatt_mode=False):$/;"	f
 plot_spectrogram	espnet/asr/asr_utils.py	/^def plot_spectrogram(plt, spec, mode='db', fs=None, frame_shift=None,$/;"	f
 plot_spectrogram	espnet/asr/pytorch_backend/asr.py	/^from espnet.asr.asr_utils import plot_spectrogram$/;"	i
 plotfn	espnet/nets/pytorch_backend/e2e_tts_transformer.py	/^    def plotfn(self, data, attn_dict, outdir, suffix="png", savefn=None):$/;"	m	class:TTSPlot
@@ -3874,6 +3885,7 @@ random	espnet/nets/pytorch_backend/rnn/decoders.py	/^import random$/;"	i
 random	espnet/transform/spec_augment.py	/^import random$/;"	i
 random	espnet/utils/spec_augment.py	/^import random$/;"	i
 random	espnet/utils/training/batchfy.py	/^    import random$/;"	i
+random	espnet/utils/training/batchfy.py	/^import random$/;"	i
 random	test/test_initialization.py	/^import random$/;"	i
 rate	espnet/nets/pytorch_backend/transformer/optimizer.py	/^    def rate(self, step=None):$/;"	m	class:NoamOpt
 re	doc/argparse2rst.py	/^import re$/;"	i
@@ -3955,6 +3967,8 @@ recognize_beam	espnet/nets/pytorch_backend/rnn/decoders.py	/^    def recognize_b
 recognize_beam	espnet/nets/pytorch_backend/rnn/decoders_transducer.py	/^    def recognize_beam(self, h, recog_args, rnnlm=None):$/;"	m	class:DecoderRNNT
 recognize_beam	espnet/nets/pytorch_backend/rnn/decoders_transducer.py	/^    def recognize_beam(self, h, recog_args, rnnlm=None):$/;"	m	class:DecoderRNNTAtt
 recognize_beam_batch	espnet/nets/pytorch_backend/rnn/decoders.py	/^    def recognize_beam_batch(self, h, hlens, lpz, recog_args, char_list, rnnlm=None,$/;"	m	class:Decoder
+recognize_ctc_greedy	espnet/nets/pytorch_backend/e2e_asr_transformer.py	/^    def recognize_ctc_greedy(self, x, recog_args):$/;"	m	class:E2E
+recognize_jca	espnet/nets/pytorch_backend/e2e_asr_transformer.py	/^    def recognize_jca(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):$/;"	m	class:E2E
 ref	egs/iwslt18/asr1/local/reorder_text.py	/^        ref = ' '.join(line.split()[1:])$/;"	v
 ref	egs/iwslt18/mt1/local/reorder_text.py	/^        ref = ' '.join(line.split()[1:])$/;"	v
 ref	egs/iwslt18/st1/local/reorder_text.py	/^        ref = ' '.join(line.split()[1:])$/;"	v
@@ -4759,12 +4773,15 @@ torch_resume	espnet/tts/pytorch_backend/tts.py	/^from espnet.asr.asr_utils impor
 torch_save	espnet/asr/asr_utils.py	/^def torch_save(path, model):$/;"	f
 torch_snapshot	espnet/asr/asr_utils.py	/^    def torch_snapshot(trainer):$/;"	f	function:torch_snapshot
 torch_snapshot	espnet/asr/asr_utils.py	/^def torch_snapshot(savefun=torch.save,$/;"	f
-torch_snapshot	espnet/asr/pytorch_backend/asr.py	/^from espnet.asr.asr_utils import torch_snapshot$/;"	i
+torch_snapshot	espnet/asr/pytorch_backend/asr.py	/^from espnet.asr.asr_utils import torch_snapshot, torch_snapshot_cleanup$/;"	i
 torch_snapshot	espnet/asr/pytorch_backend/asr_mix.py	/^from espnet.asr.asr_utils import torch_snapshot$/;"	i
 torch_snapshot	espnet/lm/pytorch_backend/lm.py	/^from espnet.asr.asr_utils import torch_snapshot$/;"	i
 torch_snapshot	espnet/mt/pytorch_backend/mt.py	/^from espnet.asr.asr_utils import torch_snapshot$/;"	i
 torch_snapshot	espnet/st/pytorch_backend/st.py	/^from espnet.asr.asr_utils import torch_snapshot$/;"	i
 torch_snapshot	espnet/tts/pytorch_backend/tts.py	/^from espnet.asr.asr_utils import torch_snapshot$/;"	i
+torch_snapshot_cleanup	espnet/asr/asr_utils.py	/^    def torch_snapshot_cleanup(trainer):$/;"	f	function:torch_snapshot_cleanup
+torch_snapshot_cleanup	espnet/asr/asr_utils.py	/^def torch_snapshot_cleanup(snapshots_num_keeps=10):$/;"	f
+torch_snapshot_cleanup	espnet/asr/pytorch_backend/asr.py	/^from espnet.asr.asr_utils import torch_snapshot, torch_snapshot_cleanup$/;"	i
 total_count	utils/text2vocabulary.py	/^    total_count = sum(counts.values())$/;"	v
 tqdm	egs/reverb/asr1/local/run_wpe.py	/^from tqdm import tqdm$/;"	i
 tqdm	egs/reverb/asr1_multich/local/run_wpe.py	/^from tqdm import tqdm$/;"	i

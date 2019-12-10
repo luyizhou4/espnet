@@ -87,6 +87,11 @@ class ChainerDataLoader(object):
         self.kwargs['shuffle'] = True
         self.loader = torch.utils.data.dataloader.DataLoader(**self.kwargs)
 
+    def perturb_sampling_shuffle(self, dataset):
+        """Shuffle function for sortagrad."""
+        self.kwargs['dataset'] = dataset
+        self.loader = torch.utils.data.dataloader.DataLoader(**self.kwargs)
+
     def finalize(self):
         """Implement finalize function."""
         del self.loader

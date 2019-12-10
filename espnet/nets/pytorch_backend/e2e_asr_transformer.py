@@ -261,8 +261,6 @@ class E2E(ASRInterface, torch.nn.Module):
         logging.info(hyp['yseq'])
         hyp['yseq'] = [self.sos] + self.ctc_mapping(idx)
         hyp['score'] = -1
-
-
         return [hyp]
 
     def ctc_mapping(self, x, blank=0):
@@ -433,8 +431,10 @@ class E2E(ASRInterface, torch.nn.Module):
                     remained_hyps.append(hyp)
 
             # end detection
-            from espnet.nets.e2e_asr_common import end_detect
-            if end_detect(ended_hyps, i) and recog_args.maxlenratio == 0.0:
+            # from espnet.nets.e2e_asr_common import end_detect
+            # if end_detect(ended_hyps, i) and recog_args.maxlenratio == 0.0:
+            from espnet.nets.e2e_asr_common import end_detect_yzl23
+            if end_detect_yzl23(ended_hyps, remained_hyps, penalty) and recog_args.maxlenratio == 0.0:
                 logging.info('end detected at %d', i)
                 break
 

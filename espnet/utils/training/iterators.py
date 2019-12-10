@@ -4,7 +4,48 @@ from chainer.iterators import SerialIterator
 from chainer.iterators import ShuffleOrderSampler
 from chainer.training.extension import Extension
 
+from espnet.utils.training.batchfy import make_batchset
+from espnet.utils.dataset import TransformDataset
+import logging
+
 import numpy as np
+
+class PerturbSamplingEnabler(Extension):
+    """An extension enabling shuffling on an Iterator"""
+
+    def __init__(self, train_iter, train_json, load_tr, converter, args):
+        """Inits the PerturbSamplingEnabler
+
+        """
+        self.train_iter = train_iter
+        self.train_json = train_json
+        self.load_tr = load_tr
+        self.converter = converter
+        self.args = args
+
+    def __call__(self, trainer):
+        """Calls the enabler on the given iterator
+
+        :param trainer: The iterator
+        """
+        args = self.args
+        use_sortagrad = args.sortagrad == -1 or args.sortagrad > 0
+        # make new batch set for perturb_sampling mode
+        # the following are imported from espnet.asr.pytorch_backend.asr:train
+        train = make_batchset(self.train_json, args.batch_size,
+                          args.maxlen_in, args.maxlen_out, args.minibatches,
+                          min_batch_size=args.ngpu if args.ngpu > 1 else 1,
+                          shortest_first=use_sortagrad,
+                          count=args.batch_count,
+                          batch_bins=args.batch_bins,
+                          batch_frames_in=args.batch_frames_in,
+                          batch_frames_out=args.batch_frames_out,
+                          batch_frames_inout=args.batch_frames_inout,
+                          iaxis=0, oaxis=0,
+                          perturb_sampling=args.perturb_sampling)
+        dataset = TransformDataset(train, lambda data: self.converter([self.load_tr(data)]))
+        self.train_iter['main'].perturb_sampling_shuffle(dataset)
+        logging.warning("Doing Perturb-Sampling shuffling")
 
 
 class ShufflingEnabler(Extension):

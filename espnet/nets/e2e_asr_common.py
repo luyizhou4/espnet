@@ -12,6 +12,24 @@ import sys
 
 from itertools import groupby
 
+def end_detect_yzl23(ended_hyps, remained_hyps, penalty):
+    """End detection
+        in this method, we don't care about ctc-scores, 
+        simply utilizing attention scores, we can early-stop decoding
+    """
+    if len(ended_hyps) == 0:
+        return False
+    if len(remained_hyps) == 0: # this will be handled later
+        return False
+    best_hyp = sorted(ended_hyps, key=lambda x: x['score'], reverse=True)[0]
+    best_remained_hyps = sorted(remained_hyps, key=lambda x: x['score'], reverse=True)[0]
+    
+    max_remained_score = best_remained_hyps['score'] + \
+                        penalty * ( len(best_remained_hyps['yseq']) + 1)
+    if max_remained_score > best_hyp['score']:
+        return False
+    else:
+        return True
 
 def end_detect(ended_hyps, i, M=3, D_end=np.log(1 * np.exp(-10))):
     """End detection

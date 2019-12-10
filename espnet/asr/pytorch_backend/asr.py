@@ -51,7 +51,7 @@ from espnet.utils.dynamic_import import dynamic_import
 from espnet.utils.io_utils import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
-from espnet.utils.training.iterators import ShufflingEnabler
+from espnet.utils.training.iterators import ShufflingEnabler, PerturbSamplingEnabler
 from espnet.utils.training.tensorboard_logger import TensorboardLogger
 from espnet.utils.training.train_utils import check_early_stop
 from espnet.utils.training.train_utils import set_early_stop
@@ -472,7 +472,8 @@ def train(args):
                           batch_frames_in=args.batch_frames_in,
                           batch_frames_out=args.batch_frames_out,
                           batch_frames_inout=args.batch_frames_inout,
-                          iaxis=0, oaxis=0)
+                          iaxis=0, oaxis=0,
+                          perturb_sampling=args.perturb_sampling)
     valid = make_batchset(valid_json, args.batch_size,
                           args.maxlen_in, args.maxlen_out, args.minibatches,
                           min_batch_size=args.ngpu if args.ngpu > 1 else 1,
@@ -514,6 +515,12 @@ def train(args):
     if use_sortagrad:
         trainer.extend(ShufflingEnabler([train_iter]),
                        trigger=(args.sortagrad if args.sortagrad != -1 else args.epochs, 'epoch'))
+
+    if args.perturb_sampling:
+        assert not use_sortagrad # use_sortagrad may cause dataloader to shuffle twitce
+        trainer.extend(PerturbSamplingEnabler(train_iter, train_json, load_tr, converter, args),
+                       trigger=(1, 'epoch'))
+
 
     # Resume from a snapshot
     if args.resume:

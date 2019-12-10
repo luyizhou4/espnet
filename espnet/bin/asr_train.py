@@ -270,6 +270,10 @@ def get_parser(parser=None, required=True):
                         help='number of snapshots to keep, note that in average_checkpoints.py, \
                         NOTE that currently our setup averages last N snapshots, rather than N-best snapshots.')
 
+    # speed perturb sampling mode
+    parser.add_argument('--perturb-sampling', type=strtobool, default=False,
+                        help='Enable speed perturb sampling, only choose one in three speed types')
+
     return parser
 
 

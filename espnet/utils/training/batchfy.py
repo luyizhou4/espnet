@@ -2,12 +2,12 @@ import itertools
 import logging
 
 import numpy as np
+import random
 
 
-def batchfy_by_seq(
-        sorted_data, batch_size, max_length_in, max_length_out,
-        min_batch_size=1, shortest_first=False,
-        ikey="input", iaxis=0, okey="output", oaxis=0):
+def batchfy_by_seq(sorted_data, batch_size, max_length_in, max_length_out,
+    min_batch_size=1, shortest_first=False,
+    ikey="input", iaxis=0, okey="output", oaxis=0):
     """Make batch set from json dictionary
 
     :param Dict[str, Dict[str, Any]] sorted_data: dictionary loaded from data.json
@@ -69,7 +69,7 @@ def batchfy_by_seq(
 
 
 def batchfy_by_bin(sorted_data, batch_bins, num_batches=0, min_batch_size=1, shortest_first=False,
-                   ikey="input", okey="output"):
+    ikey="input", okey="output"):
     """Make variably sized batch set, which maximizes the number of bins up to `batch_bins`.
 
     :param Dict[str, Dict[str, Any]] sorted_data: dictionary loaded from data.json
@@ -140,8 +140,8 @@ def batchfy_by_bin(sorted_data, batch_bins, num_batches=0, min_batch_size=1, sho
 
 
 def batchfy_by_frame(sorted_data, max_frames_in, max_frames_out, max_frames_inout,
-                     num_batches=0, min_batch_size=1, shortest_first=False,
-                     ikey="input", okey="output"):
+    num_batches=0, min_batch_size=1, shortest_first=False,
+    ikey="input", okey="output"):
     """Make variably sized batch set, which maximizes the number of frames to max_batch_frame.
 
     :param Dict[str, Dict[str, Any]] sorteddata: dictionary loaded from data.json
@@ -261,7 +261,8 @@ def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out
                   num_batches=0, min_batch_size=1, shortest_first=False, batch_sort_key="input",
                   swap_io=False, mt=False, count="auto",
                   batch_bins=0, batch_frames_in=0, batch_frames_out=0, batch_frames_inout=0,
-                  iaxis=0, oaxis=0):
+                  iaxis=0, oaxis=0,
+                  perturb_sampling=False):
     """Make batch set from json dictionary
 
     if utts have "category" value,
@@ -342,9 +343,35 @@ def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out
     if count != "seq" and batch_sort_key == "shuffle":
         raise ValueError(f"batch_sort_key=shuffle is only available if batch_count=seq")
 
+    # perturb sampling mode, only choose one utt in three speed type
+    # check all speed type exists, otherwise delete this utterance
     category2data = {}  # Dict[str, dict]
-    for k, v in data.items():
-        category2data.setdefault(v.get('category'), {})[k] = v
+    if perturb_sampling:
+        uniq_id = {}
+        speed_keys = ['sp0.9-', 'sp1.0-', 'sp1.1-']
+        speed_num = len(speed_keys)
+        for k, v in data.items():
+            for speed_key in speed_keys:
+                if k.startswith(speed_key):
+                    uid = k[len(speed_key):]
+                    if uniq_id.get(uid) is None:
+                        uniq_id[uid] = 1
+                    else:
+                        uniq_id[uid] += 1
+        # filtered out unfilled utterances
+        for k, v in list(uniq_id.items()):
+            if v < speed_num:
+                del uniq_id[k]
+                logging.warning('del key %s for missing speed type'%(k))
+        # fill category2data 
+        for k in uniq_id.keys():
+            chosen_speed_type = random.choice(speed_keys)
+            uid = chosen_speed_type + k
+            utt_data = data[uid]
+            category2data.setdefault(utt_data.get('category'), {})[uid] = utt_data
+    else:
+        for k, v in data.items():
+            category2data.setdefault(v.get('category'), {})[k] = v
 
     batches_list = []  # List[List[List[Tuple[str, dict]]]]
     for d in category2data.values():

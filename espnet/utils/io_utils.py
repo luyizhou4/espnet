@@ -169,7 +169,7 @@ class LoadInputsAndTargets(object):
                 if x_name.startswith("input"):
                     return_batch[x_name] = self.preprocessing(
                         return_batch[x_name], uttid_list, **self.preprocess_args)
-
+        # logging.warning(uttid_list)
         # Doesn't return the names now.
         return tuple(return_batch.values())
 
