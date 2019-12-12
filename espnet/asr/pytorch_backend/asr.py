@@ -18,6 +18,7 @@ from chainer import training
 from chainer.training import extensions
 from chainer.training.updater import StandardUpdater
 import numpy as np
+import kaldi_io
 from tensorboardX import SummaryWriter
 import torch
 from torch.nn.parallel import data_parallel
@@ -692,19 +693,37 @@ def recog(args):
         js = json.load(f)['utts']
     new_js = {}
 
-    load_inputs_and_targets = LoadInputsAndTargets(
-        mode='asr', load_output=False, sort_in_input_length=False,
-        preprocess_conf=train_args.preprocess_conf
-        if args.preprocess_conf is None else args.preprocess_conf,
-        preprocess_args={'train': False})
+    if args.store_penultimate_state:
+        load_inputs_and_targets = LoadInputsAndTargets(
+            mode='asr', load_output=True, sort_in_input_length=False,
+            preprocess_conf=train_args.preprocess_conf
+            if args.preprocess_conf is None else args.preprocess_conf,
+            preprocess_args={'train': False})
+        converter = CustomConverter(subsampling_factor=model.subsample[0])
+        w_fd = kaldi_io.open_or_fd(args.store_penultimate_state, 'wb')
+        logging.warning("To plot penultimate state, we need to load output")
+    else:
+        load_inputs_and_targets = LoadInputsAndTargets(
+            mode='asr', load_output=False, sort_in_input_length=False,
+            preprocess_conf=train_args.preprocess_conf
+            if args.preprocess_conf is None else args.preprocess_conf,
+            preprocess_args={'train': False})
 
     if args.batchsize == 0:
         with torch.no_grad():
             for idx, name in enumerate(js.keys(), 1):
                 logging.info('(%d/%d) decoding ' + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
-                feat = load_inputs_and_targets(batch)
-                feat = feat[0][0] if args.num_encs == 1 else [feat[idx][0] for idx in range(model.num_encs)]
+                if args.store_penultimate_state:
+                    xs_pad, ilens, ys_pad = converter([load_inputs_and_targets(batch)])
+                    mat = model.store_penultimate_state(xs_pad, ilens, ys_pad)
+                    logging.info("state shape %s"%( str(mat.shape) ) )
+                    kaldi_io.write_mat(w_fd, mat, name)
+                    w_fd.flush()
+                    continue
+                else:
+                    feat = load_inputs_and_targets(batch)
+                    feat = feat[0][0] if args.num_encs == 1 else [feat[idx][0] for idx in range(model.num_encs)]
                 if args.streaming_mode == 'window' and args.num_encs == 1:
                     logging.info('Using streaming recognizer with window size %d frames', args.streaming_window)
                     se2e = WindowStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
@@ -737,7 +756,6 @@ def recog(args):
                 else:
                     nbest_hyps = model.recognize(feat, args, train_args.char_list, rnnlm)
                 new_js[name] = add_results_to_json(js[name], nbest_hyps, train_args.char_list)
-
     else:
         def grouper(n, iterable, fillvalue=None):
             kargs = [iter(iterable)] * n
@@ -786,8 +804,11 @@ def recog(args):
                     name = names[i]
                     new_js[name] = add_results_to_json(js[name], nbest_hyp, train_args.char_list)
 
-    with open(args.result_label, 'wb') as f:
-        f.write(json.dumps({'utts': new_js}, indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
+    if args.store_penultimate_state:
+        w_fd.close()
+    else:
+        with open(args.result_label, 'wb') as f:
+            f.write(json.dumps({'utts': new_js}, indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
 
 
 def enhance(args):

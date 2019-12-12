@@ -125,6 +125,10 @@ def get_parser():
     # yzl23 setups
     parser.add_argument('--ctc-greedy-decoding', type=strtobool, default=False,
                         help='ctc greedy decoding, not use ctc-prefix-search')
+
+    parser.add_argument('--store-penultimate-state', default="", type=str,
+                           help='Path to store the penultimate layer output ark')
+
     return parser
 
 

@@ -76,6 +76,15 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
+
+        # yzl23 config
+        group.add_argument('--lid-mtl-type', default=0, type=int,
+                           help='language id multitask type, type 0: deactivated \
+                           type 1: directly utils decoder output,\
+                           type 2: uses penultimate output')
+        group.add_argument('--lid-mtl-alpha', default=0.0, type=float,
+                           help='language id multitask alpha coefficient')
+
         return parser
 
     @property
@@ -145,6 +154,9 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
+        # lid mtl config
+        self.lid_mtl_type = args.lid_mtl_type
+        self.lid_mtl_alpha = args.lid_mtl_alpha
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -244,20 +256,6 @@ class E2E(ASRInterface, torch.nn.Module):
             return self.recognize_ctc_greedy(x, recog_args)
         else:
             return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
-
-    def store_penultimate_state(self, xs_pad, ilens, ys_pad):
-        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
-        src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
-        self.hs_pad = hs_pad
-
-        # forward decoder
-        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-        ys_mask = target_mask(ys_in_pad, self.ignore_id)
-        pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
-
-        # plot penultimate_state, (B,T,att_dim)
-        return penultimate_state.squeeze(0).detach().cpu().numpy()
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.

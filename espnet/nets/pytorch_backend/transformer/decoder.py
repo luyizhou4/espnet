@@ -93,7 +93,7 @@ class Decoder(ScorerInterface, torch.nn.Module):
         else:
             self.output_layer = None
 
-    def forward(self, tgt, tgt_mask, memory, memory_mask):
+    def forward(self, tgt, tgt_mask, memory, memory_mask, return_penultimate_state=False):
         """Forward decoder.
 
         :param torch.Tensor tgt: input token ids, int64 (batch, maxlen_out) if input_layer == "embed"
@@ -115,8 +115,13 @@ class Decoder(ScorerInterface, torch.nn.Module):
         x, tgt_mask, memory, memory_mask = self.decoders(x, tgt_mask, memory, memory_mask)
         if self.normalize_before:
             x = self.after_norm(x)
+        # to utilize penultimate_state, we need to store it
+        if return_penultimate_state:
+            penultimate_state = x
         if self.output_layer is not None:
             x = self.output_layer(x)
+        if return_penultimate_state:
+            return x, tgt_mask, penultimate_state
         return x, tgt_mask
 
     def forward_one_step(self, tgt, tgt_mask, memory, cache=None):
