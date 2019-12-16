@@ -274,6 +274,9 @@ def get_parser(parser=None, required=True):
     parser.add_argument('--perturb-sampling', type=strtobool, default=False,
                         help='Enable speed perturb sampling, only choose one in three speed types')
 
+    # lid multitask log accuracy config
+    parser.add_argument('--log-lid-mtl-acc', default=False, type=strtobool,
+                           help='Plot Language id multitask accuracy')
     return parser
 
 

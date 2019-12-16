@@ -10,11 +10,12 @@ import logging
 import math
 
 import torch
+import chainer
+from chainer import reporter
 
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.pytorch_backend.ctc import CTC
 from espnet.nets.pytorch_backend.e2e_asr import CTC_LOSS_THRESHOLD
-from espnet.nets.pytorch_backend.e2e_asr import Reporter
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
@@ -22,12 +23,26 @@ from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttenti
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
 from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
-from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSmoothingLoss
+from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSmoothingLoss, LanguageIDMultitakLoss
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.scorers.ctc import CTCPrefixScorer
 
+class Reporter(chainer.Chain):
+    """A chainer reporter wrapper."""
+
+    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss, lid_acc):
+        """Report at every step."""
+        reporter.report({'loss_ctc': loss_ctc}, self)
+        reporter.report({'loss_att': loss_att}, self)
+        reporter.report({'acc': acc}, self)
+        reporter.report({'cer_ctc': cer_ctc}, self)
+        reporter.report({'cer': cer}, self)
+        reporter.report({'wer': wer}, self)
+        logging.info('mtl loss:' + str(mtl_loss))
+        reporter.report({'loss': mtl_loss}, self)
+        reporter.report({'lid_acc': lid_acc}, self)
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -76,15 +91,9 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
-
         # yzl23 config
-        group.add_argument('--lid-mtl-type', default=0, type=int,
-                           help='language id multitask type, type 0: deactivated \
-                           type 1: directly utils decoder output,\
-                           type 2: uses penultimate output')
-        group.add_argument('--lid-mtl-alpha', default=0.0, type=float,
-                           help='language id multitask alpha coefficient')
-
+        group.add_argument('--lid-mtl-alpha', default=0.1, type=float,
+                           help='Language id multitask alpha')
         return parser
 
     @property
@@ -154,9 +163,21 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
-        # lid mtl config
-        self.lid_mtl_type = args.lid_mtl_type
+        # lid multitask related
+        adim = args.adim
+        self.lid_odim = 2 # cn and en
+        # src attention
+        self.lid_src_att = MultiHeadedAttention(args.aheads, args.adim, args.transformer_attn_dropout_rate)
+        # self.lid_output_layer = torch.nn.Sequential(torch.nn.Linear(adim, adim), 
+        #                                         torch.nn.Tanh(),
+        #                                         torch.nn.Linear(adim, self.lid_odim))
+        self.lid_output_layer = torch.nn.Linear(adim, self.lid_odim)
+        # here we hack to use lsm loss, but with lsm_weight ZERO
+        self.lid_criterion = LanguageIDMultitakLoss(self.ignore_id, \
+                                                normalize_length=args.transformer_length_normalized_loss)
         self.lid_mtl_alpha = args.lid_mtl_alpha
+        logging.warning("language id multitask training alpha %f"%(self.lid_mtl_alpha))
+        self.log_lid_mtl_acc = args.log_lid_mtl_acc
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -185,13 +206,20 @@ class E2E(ASRInterface, torch.nn.Module):
         # 2. forward decoder
         ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
         ys_mask = target_mask(ys_in_pad, self.ignore_id)
-        pred_pad, pred_mask = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask)
+        pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask,
+                                                    return_penultimate_state=True)
         self.pred_pad = pred_pad
 
         # 3. compute attention loss
         loss_att = self.criterion(pred_pad, ys_out_pad)
         self.acc = th_accuracy(pred_pad.view(-1, self.odim), ys_out_pad,
                                ignore_label=self.ignore_id)
+        # 4. compute lid multitask loss
+        src_att = self.lid_src_att(penultimate_state, hs_pad, hs_pad, hs_mask)
+        pred_lid_pad = self.lid_output_layer(src_att)
+        loss_lid, lid_ys_out_pad = self.lid_criterion(pred_lid_pad, ys_out_pad)
+        lid_acc = th_accuracy(pred_lid_pad.view(-1, self.lid_odim), lid_ys_out_pad,
+                               ignore_label=self.ignore_id) if self.log_lid_mtl_acc else None
 
         # TODO(karita) show predicted text
         # TODO(karita) calculate these stats
@@ -215,22 +243,24 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # copyied from e2e_asr
         alpha = self.mtlalpha
+        lid_alpha = self.lid_mtl_alpha
         if alpha == 0:
-            self.loss = loss_att
+            self.loss = loss_att + lid_alpha * loss_lid
             loss_att_data = float(loss_att)
             loss_ctc_data = None
         elif alpha == 1:
+            raise Exception("LID MTL not supports pure ctc mode")
             self.loss = loss_ctc
             loss_att_data = None
             loss_ctc_data = float(loss_ctc)
         else:
-            self.loss = alpha * loss_ctc + (1 - alpha) * loss_att
+            self.loss = alpha * loss_ctc + (1 - alpha) * loss_att + lid_alpha * loss_lid
             loss_att_data = float(loss_att)
             loss_ctc_data = float(loss_ctc)
 
         loss_data = float(self.loss)
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
-            self.reporter.report(loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data)
+            self.reporter.report(loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data, lid_acc)
         else:
             logging.warning('loss (=%f) is not correct', loss_data)
         return self.loss
@@ -256,6 +286,20 @@ class E2E(ASRInterface, torch.nn.Module):
             return self.recognize_ctc_greedy(x, recog_args)
         else:
             return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
+
+    def store_penultimate_state(self, xs_pad, ilens, ys_pad):
+        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
+        src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        self.hs_pad = hs_pad
+
+        # forward decoder
+        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+        ys_mask = target_mask(ys_in_pad, self.ignore_id)
+        pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
+
+        # plot penultimate_state, (B,T,att_dim)
+        return penultimate_state.squeeze(0).detach().cpu().numpy()
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.

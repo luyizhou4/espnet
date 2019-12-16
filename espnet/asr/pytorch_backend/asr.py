@@ -620,6 +620,10 @@ def train(args):
             'eps', lambda trainer: trainer.updater.get_optimizer('main').param_groups[0]["eps"]),
             trigger=(args.report_interval_iters, 'iteration'))
         report_keys.append('eps')
+    # lid mtl
+    if args.log_lid_mtl_acc: # yzl23: this is used only in module e2e_asr_transformer_lid:E2E
+        assert 'e2e_asr_transformer_lid:E2E' in args.model_module
+        report_keys.extend(['main/lid_acc', 'validation/main/lid_acc'])
     if args.report_cer:
         report_keys.append('validation/main/cer')
     if args.report_wer:
