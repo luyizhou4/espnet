@@ -272,8 +272,13 @@ class E2E(ASRInterface, torch.nn.Module):
         lpz = lpz.squeeze(0) # shape of (T, D)
         idx = lpz.argmax(-1).cpu().numpy().tolist()
         hyp = {}
+        if recog_args.ctc_raw_results:
+            hyp['yseq'] = [self.sos] + idx # not apply ctc mapping, to get ctc alignment
+        else:
+            # <sos> is added here to be compatible with S2S decoding, 
+            # file: espnet/asr/asr_utils/parse_hypothesis
+            hyp['yseq'] = [self.sos] + self.ctc_mapping(idx)
         logging.info(hyp['yseq'])
-        hyp['yseq'] = [self.sos] + self.ctc_mapping(idx)
         hyp['score'] = -1
         return [hyp]
 
