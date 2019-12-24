@@ -194,6 +194,16 @@ class E2E(ASRInterface, torch.nn.Module):
         hyp['score'] = -1
         return [hyp]
 
+    def store_penultimate_state(self, xs_pad, ilens, ys_pad):
+        self.eval()
+        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
+        src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        # lid output layer
+        pred_pad = torch.nn.functional.softmax(self.lid_lo(hs_pad), dim=-1)
+        # plot penultimate_state, (B,T,att_dim)
+        return pred_pad.squeeze(0).detach().cpu().numpy()
+
     def calculate_all_attentions(self, xs_pad, ilens, ys_pad):
         """E2E attention calculation.
 
