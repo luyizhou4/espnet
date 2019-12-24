@@ -369,14 +369,12 @@ def train(args):
     else:
         mtl_mode = 'mtl'
         logging.warning('Multitask learning mode, alpha %f'%(args.mtlalpha))
-
     if (args.enc_init is not None or args.dec_init is not None) and args.num_encs == 1:
         model = load_trained_modules(idim_list[0], odim, args)
     else:
         model_class = dynamic_import(args.model_module)
         model = model_class(idim_list[0] if args.num_encs == 1 else idim_list, odim, args)
     assert isinstance(model, ASRInterface)
-
     if args.rnnlm is not None:
         rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
         rnnlm = lm_pytorch.ClassifierWithState(
