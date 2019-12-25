@@ -221,7 +221,7 @@ class E2E(ASRInterface, torch.nn.Module):
         hyp['score'] = -1
         return [hyp]
 
-
+    # todo: batch processing, currently decoding mix200 with 48 cpu consumes around one hour
     def store_penultimate_state(self, xs_pad, ilens, ys_pad):
         self.eval()
         xs_pad, ilens = self.conv(xs_pad, ilens)

@@ -717,7 +717,7 @@ def recog(args):
                 logging.info('(%d/%d) decoding ' + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
                 if args.store_penultimate_state:
-                    xs_pad, ilens, ys_pad = converter([load_inputs_and_targets(batch)])
+                    xs_pad, ilens, ys_pad = converter([load_inputs_and_targets(batch)]) # ys_pad is used in S2S Decoder
                     mat = model.store_penultimate_state(xs_pad, ilens, ys_pad)
                     logging.info("state shape %s"%( str(mat.shape) ) )
                     kaldi_io.write_mat(w_fd, mat, name)
