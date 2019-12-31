@@ -374,7 +374,7 @@ def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out
             category2data.setdefault(v.get('category'), {})[k] = v
 
     batches_list = []  # List[List[List[Tuple[str, dict]]]]
-    for d in category2data.values():
+    for d in category2data.values(): # d: {uttid: {}}
         if batch_sort_key == 'shuffle':
             batches = batchfy_shuffle(d, batch_size, min_batch_size, num_batches, shortest_first)
             batches_list.append(batches)

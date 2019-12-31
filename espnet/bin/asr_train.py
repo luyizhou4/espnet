@@ -277,6 +277,10 @@ def get_parser(parser=None, required=True):
     # lid multitask log accuracy config
     parser.add_argument('--log-lid-mtl-acc', default=False, type=strtobool,
                            help='Plot Language id multitask accuracy')
+
+    # MoE config
+    parser.add_argument('--moe-mode', default=False, type=strtobool,
+                           help='mixture of experts mode, this is used to load moe-coe in CustomConverterMoE')
     return parser
 
 

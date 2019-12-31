@@ -221,6 +221,71 @@ class CustomUpdater(StandardUpdater):
         if self.forward_count == 0:
             self.iteration += 1
 
+class CustomConverterMoE(object):
+    """Custom batch converter for Pytorch.
+
+    Args:
+        subsampling_factor (int): The subsampling factor.
+        dtype (torch.dtype): Data type to convert.
+
+    """
+
+    def __init__(self, subsampling_factor=1, dtype=torch.float32):
+        """Construct a CustomConverter object."""
+        self.subsampling_factor = subsampling_factor
+        self.ignore_id = -1
+        self.dtype = dtype
+
+    def __call__(self, batch, device=torch.device('cpu')):
+        """Transform a batch and send it to a device.
+
+        Args:
+            batch (list): The batch to transform.
+            device (torch.device): The device to send to.
+
+        Returns:
+            tuple(torch.Tensor, torch.Tensor, torch.Tensor)
+
+        """
+        # batch should be located in list
+        assert len(batch) == 1
+        xs, moe_coes, ys = batch[0]
+
+        # perform subsampling
+        if self.subsampling_factor > 1:
+            xs = [x[::self.subsampling_factor, :] for x in xs]
+
+        # get batch of lengths of input sequences
+        ilens = np.array([x.shape[0] for x in xs])
+
+        # perform padding and convert to tensor
+        # currently only support real number
+        if xs[0].dtype.kind == 'c':
+            xs_pad_real = pad_list(
+                [torch.from_numpy(x.real).float() for x in xs], 0).to(device, dtype=self.dtype)
+            xs_pad_imag = pad_list(
+                [torch.from_numpy(x.imag).float() for x in xs], 0).to(device, dtype=self.dtype)
+            # Note(kamo):
+            # {'real': ..., 'imag': ...} will be changed to ComplexTensor in E2E.
+            # Don't create ComplexTensor and give it E2E here
+            # because torch.nn.DataParellel can't handle it.
+            xs_pad = {'real': xs_pad_real, 'imag': xs_pad_imag}
+        else:
+            xs_pad = pad_list([torch.from_numpy(x).float() for x in xs], 0).to(device, dtype=self.dtype)
+
+        ilens = torch.from_numpy(ilens).to(device)
+        # NOTE: this is for multi-output (e.g., speech translation)
+        ys_pad = pad_list([torch.from_numpy(np.array(y[0][:]) if isinstance(y, tuple) else y).long()
+                           for y in ys], self.ignore_id).to(device)
+
+        # here we need to convert moe_coes [(T1, 2)np_array, (T2, 2)np_array ...] into (B, Tmax, 2) tensor
+        # this is to calculate weighted-sum of experts' frame-wise outputs
+        # CN_outputs(B, Tmax, D) * CN_coe(B, Tmax, 1) + EN_outputs(B, Tmax, D) * EN_coe(B, Tmax, 1)
+        moe_coe_lens = np.array([x.shape[0] for x in moe_coes]) # for data parallel
+        moe_coe_lens = torch.from_numpy(moe_coe_lens).to(device)
+        moe_coes = pad_list([torch.from_numpy(x).float() for x in moe_coes], 0).to(device, dtype=self.dtype)
+        return xs_pad, ilens, ys_pad, moe_coes, moe_coe_lens
+
 
 class CustomConverter(object):
     """Custom batch converter for Pytorch.
@@ -368,7 +433,7 @@ def train(args):
         logging.warning('Pure attention mode')
     else:
         mtl_mode = 'mtl'
-        logging.warning('Multitask learning mode, alpha %f'%(args.mtlalpha))
+        logging.warning('Joint CTC/Attention learning mode, alpha %f'%(args.mtlalpha))
     if (args.enc_init is not None or args.dec_init is not None) and args.num_encs == 1:
         model = load_trained_modules(idim_list[0], odim, args)
     else:
@@ -449,10 +514,15 @@ def train(args):
     setattr(optimizer, "serialize", lambda s: reporter.serialize(s))
 
     # Setup a converter
-    if args.num_encs == 1:
-        converter = CustomConverter(subsampling_factor=model.subsample[0], dtype=dtype)
+    if args.moe_mode:
+        assert args.num_encs == 1, "multi-encoder type is not supported currently."
+        converter = CustomConverterMoE(subsampling_factor=model.subsample[0], dtype=dtype)
+        logging.warning("Using CustomConverterMoE")
     else:
-        converter = CustomConverterMulEnc([i[0] for i in model.subsample_list], dtype=dtype)
+        if args.num_encs == 1:
+            converter = CustomConverter(subsampling_factor=model.subsample[0], dtype=dtype)
+        else:
+            converter = CustomConverterMulEnc([i[0] for i in model.subsample_list], dtype=dtype)
 
     # read json data
     with open(args.train_json, 'rb') as f:
@@ -702,6 +772,15 @@ def recog(args):
             if args.preprocess_conf is None else args.preprocess_conf,
             preprocess_args={'train': False})
         converter = CustomConverter(subsampling_factor=model.subsample[0])
+        if train_args.moe_mode:
+            assert train_args.num_encs == 1, "multi-encoder type is not supported currently."
+            converter = CustomConverterMoE(subsampling_factor=model.subsample[0])
+            logging.warning("Using CustomConverterMoE")
+        else:
+            if train_args.num_encs == 1:
+                converter = CustomConverter(subsampling_factor=model.subsample[0])
+            else:
+                converter = CustomConverterMulEnc([i[0] for i in model.subsample_list])
         w_fd = kaldi_io.open_or_fd(args.store_penultimate_state, 'wb')
         logging.warning("To plot penultimate state, we need to load output")
     else:
@@ -717,15 +796,19 @@ def recog(args):
                 logging.info('(%d/%d) decoding ' + name, idx, len(js.keys()))
                 batch = [(name, js[name])]
                 if args.store_penultimate_state:
-                    xs_pad, ilens, ys_pad = converter([load_inputs_and_targets(batch)]) # ys_pad is used in S2S Decoder
-                    mat = model.store_penultimate_state(xs_pad, ilens, ys_pad)
+                    # ys_pad is used in S2S Decoder
+                    mat = model.store_penultimate_state(*converter(
+                                            [load_inputs_and_targets(batch)]))
                     logging.info("state shape %s"%( str(mat.shape) ) )
                     kaldi_io.write_mat(w_fd, mat, name)
                     w_fd.flush()
                     continue
                 else:
                     feat = load_inputs_and_targets(batch)
-                    feat = feat[0][0] if args.num_encs == 1 else [feat[idx][0] for idx in range(model.num_encs)]
+                    if train_args.moe_mode:
+                        feat = [feat[0][0], feat[1][0]] # since there is only only one-single utterance
+                    else:
+                        feat = feat[0][0] if args.num_encs == 1 else [feat[idx][0] for idx in range(model.num_encs)]
                 if args.streaming_mode == 'window' and args.num_encs == 1:
                     logging.info('Using streaming recognizer with window size %d frames', args.streaming_window)
                     se2e = WindowStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
