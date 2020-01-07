@@ -126,7 +126,6 @@ class E2E(ASRInterface, torch.nn.Module):
         self.criterion = LabelSmoothingLoss(self.odim, self.ignore_id, args.lsm_weight,
                                             args.transformer_length_normalized_loss)
         # self.verbose = args.verbose
-        self.reset_parameters(args)
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
         if args.mtlalpha > 0.0:
@@ -145,6 +144,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
+        self.reset_parameters(args) # reset params at the last
 
     def reset_parameters(self, args):
         """Initialize parameters."""

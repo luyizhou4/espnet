@@ -116,14 +116,14 @@ class E2E(ASRInterface, torch.nn.Module):
         self.ignore_id = ignore_id
         self.subsample = [1]
         self.reporter = Reporter()
-
         # self.lsm_weight = a
         self.criterion = LabelSmoothingLoss(self.odim, self.ignore_id, args.lsm_weight,
                                             args.transformer_length_normalized_loss)
-        self.reset_parameters(args)
         self.lid_lo = torch.nn.Linear(args.adim, self.odim)
         # yzl23 config
         logging.warning(self)
+        # reset parameters
+        self.reset_parameters(args)
 
     def reset_parameters(self, args):
         """Initialize parameters."""
