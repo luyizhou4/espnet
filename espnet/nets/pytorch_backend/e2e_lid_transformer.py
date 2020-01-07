@@ -84,6 +84,11 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
+        # yzl23 config
+        group.add_argument('--pretrained-ctc-model', default="", type=str,
+                           help='pretrained ctc model for initialization')
+        group.add_argument('--remove-last-enc-layer', default=False, type=strtobool,
+                           help='remove ctc output layer')
         return parser
 
     @property
@@ -121,14 +126,28 @@ class E2E(ASRInterface, torch.nn.Module):
                                             args.transformer_length_normalized_loss)
         self.lid_lo = torch.nn.Linear(args.adim, self.odim)
         # yzl23 config
-        logging.warning(self)
+        # logging.warning(self)
         # reset parameters
         self.reset_parameters(args)
 
     def reset_parameters(self, args):
         """Initialize parameters."""
         # initialize parameters
-        initialize(self, args.transformer_init)
+        if args.pretrained_ctc_model:
+            path = args.pretrained_ctc_model
+            logging.warning("load pretrained asr model from {}".format(path))
+            if 'snapshot' in path:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
+            else:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            # In lid-classifier-mode, encoder+lid_lo params is utilized,
+            # thus we do not remove any keys in model_state_dict and simply set strict=False
+            self.load_state_dict(model_state_dict, strict=False)
+            # logging.warning("load state dict params:")
+            # logging.warning(model_state_dict.keys())
+            del model_state_dict
+        else:
+            initialize(self, args.transformer_init)
 
     def forward(self, xs_pad, ilens, ys_pad):
         """E2E forward.
