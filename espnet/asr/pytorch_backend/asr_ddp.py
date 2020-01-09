@@ -453,12 +453,12 @@ def train(args):
 
     # write model config
     if not os.path.exists(args.outdir):
-        os.makedirs(args.outdir)
-    model_conf = args.outdir + '/model.json'
-    with open(model_conf, 'wb') as f:
-        logging.info('writing a model config file to ' + model_conf)
-        f.write(json.dumps((idim_list[0] if args.num_encs == 1 else idim_list, odim, vars(args)),
-                           indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
+        os.makedirs(args.outdir, exist_ok=True)
+        model_conf = args.outdir + '/model.json'
+        with open(model_conf, 'wb') as f:
+            logging.info('writing a model config file to ' + model_conf)
+            f.write(json.dumps((idim_list[0] if args.num_encs == 1 else idim_list, odim, vars(args)),
+                               indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
     for key in sorted(vars(args).keys()):
         logging.info('ARGS: ' + key + ': ' + str(vars(args)[key]))
 
