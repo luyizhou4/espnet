@@ -42,7 +42,9 @@ class PerturbSamplingEnabler(Extension):
                           batch_frames_out=args.batch_frames_out,
                           batch_frames_inout=args.batch_frames_inout,
                           iaxis=0, oaxis=0,
-                          perturb_sampling=args.perturb_sampling)
+                          perturb_sampling=args.perturb_sampling,
+                          rank=args.rank,
+                          world_size=args.world_size)
         dataset = TransformDataset(train, lambda data: self.converter([self.load_tr(data)]))
         self.train_iter['main'].perturb_sampling_shuffle(dataset)
         logging.warning("Doing Perturb-Sampling shuffling")

@@ -261,8 +261,7 @@ def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out
                   num_batches=0, min_batch_size=1, shortest_first=False, batch_sort_key="input",
                   swap_io=False, mt=False, count="auto",
                   batch_bins=0, batch_frames_in=0, batch_frames_out=0, batch_frames_inout=0,
-                  iaxis=0, oaxis=0,
-                  perturb_sampling=False):
+                  iaxis=0, oaxis=0, perturb_sampling=False, rank=0, world_size=1):
     """Make batch set from json dictionary
 
     if utts have "category" value,
@@ -298,6 +297,9 @@ def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out
     :param int iaxis: dimension to access input (for ASR, TTS iaxis=0, for MT iaxis="1".)
     :param int oaxis: dimension to access output (for ASR, TTS, MT oaxis=0, reserved for future research,
                       -1 means all axis.)
+    :param bool perturb_sampling: pick one in three speed, and return 1/3 data
+    :param int rank: distributed dataset, rank
+    :param int world_size: distributed dataset, world_size
     """
 
     # check args
@@ -422,5 +424,9 @@ def make_batchset(data, batch_size=0, max_length_in=float("inf"), max_length_out
         batches = batches[:num_batches]
     logging.info('# minibatches: ' + str(len(batches)))
 
+    # distributed data set related
+    actual_batch_num = len(batches) // world_size * world_size
+    batches = batches[rank:actual_batch_num:world_size]
+    logging.warning("Worker {}, Number of batcher: {}, this worker uses {}".format(rank, actual_batch_num, len(batches)))
     # batch: List[List[Tuple[str, dict]]]
     return batches
