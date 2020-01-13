@@ -373,6 +373,8 @@ def main(cmd_args):
     logging.info('backend = ' + args.backend)
 
     # distributed setting
+    if not os.path.exists(args.outdir):
+        os.makedirs(args.outdir, exist_ok=True)
     sync_file = os.path.abspath(args.outdir) + '/synchronized'
     if args.rank == 0:
         if os.path.exists(sync_file):
