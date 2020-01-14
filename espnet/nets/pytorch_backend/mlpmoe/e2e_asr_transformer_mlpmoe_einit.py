@@ -76,6 +76,10 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
+        group.add_argument('--pretrained-cn-ctc-model', default='', type=str,
+                         help='pretrained cn ctc model')
+        group.add_argument('--pretrained-en-ctc-model', default='', type=str,
+                         help='pretrained en ctc model')
         return parser
 
     @property
