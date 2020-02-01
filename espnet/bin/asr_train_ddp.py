@@ -385,6 +385,7 @@ def main(cmd_args):
             world_size = args.world_size,
             rank = args.rank)
     torch.set_num_threads(2)
+    logging.warning("Rank: {} init fine".format(args.rank))
 
     if args.num_spkrs == 1:
         if args.backend == "chainer":
