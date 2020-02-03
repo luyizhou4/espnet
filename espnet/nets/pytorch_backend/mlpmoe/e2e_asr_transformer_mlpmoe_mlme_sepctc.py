@@ -12,7 +12,6 @@ import math
 import torch
 
 from espnet.nets.asr_interface import ASRInterface
-from espnet.nets.pytorch_backend.ctc import CTC
 from espnet.nets.pytorch_backend.e2e_asr import CTC_LOSS_THRESHOLD
 from espnet.nets.pytorch_backend.e2e_asr import Reporter
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
@@ -27,6 +26,7 @@ from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 
+from espnet.nets.pytorch_backend.ctc_moe import CTC
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -146,6 +146,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
         if args.mtlalpha > 0.0:
+            # Note: here CTC also need to have seperate ctc_lo layer
             self.ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
         else:
             self.ctc = None
@@ -175,12 +176,15 @@ class E2E(ASRInterface, torch.nn.Module):
             else:
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
             for k in list(model_state_dict.keys()):
-                if not 'encoder' in k:
-                    # remove this key
-                    del model_state_dict[k]
-                else:
+                if 'encoder' in k:
                     new_k = k.replace('encoder.', prefix + 'encoder.')
                     model_state_dict[new_k] = model_state_dict.pop(k)
+                elif 'ctc_lo' in k:
+                    new_k = k.replace('ctc_lo', prefix + 'ctc_lo')
+                    model_state_dict[new_k] = model_state_dict.pop(k)
+                else:
+                    # remove this key
+                    del model_state_dict[k]
             return model_state_dict
 
         def load_state_dict_all(path, prefix=''):
@@ -189,11 +193,14 @@ class E2E(ASRInterface, torch.nn.Module):
             else:
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
             for k in list(model_state_dict.keys()):
-                if not 'encoder' in k:
-                    continue
-                else:
+                if 'encoder' in k:
                     new_k = k.replace('encoder.', prefix + 'encoder.')
                     model_state_dict[new_k] = model_state_dict.pop(k)
+                elif 'ctc_lo' in k:
+                    new_k = k.replace('ctc_lo', prefix + 'ctc_lo')
+                    model_state_dict[new_k] = model_state_dict.pop(k)
+                else:
+                    continue
             return model_state_dict
         
         # initialize parameters
@@ -256,9 +263,9 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
+            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad, moe_coes)
             if self.error_calculator is not None:
-                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
+                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim), moe_coes).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
         if self.mtlalpha == 1:
@@ -357,7 +364,7 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: list
         """
         enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
-        lpz = self.ctc.log_softmax(enc_output)
+        lpz = self.ctc.log_softmax(enc_output, torch.as_tensor(x[1]).unsqueeze(0))
         lpz = lpz.squeeze(0) # shape of (T, D)
         idx = lpz.argmax(-1).cpu().numpy().tolist()
         hyp = {}
@@ -392,7 +399,7 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
         if recog_args.ctc_weight > 0.0:
-            lpz = self.ctc.log_softmax(enc_output)
+            lpz = self.ctc.log_softmax(enc_output, torch.as_tensor(x[1]).unsqueeze(0))
             lpz = lpz.squeeze(0) # shape of (T, D)
         else:
             lpz = None
