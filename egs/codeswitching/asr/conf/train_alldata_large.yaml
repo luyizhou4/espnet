@@ -1,5 +1,6 @@
-# this config is used for all data trainging(cn500+lib960+mix200), 8gpu 12G memory
+# this config is used for all data training(cn500+lib960+mix200), 8gpu 12G memory
 # similar to egs/librispeech/config/train.yaml
+# but set mtlalpha_0.2, batch-bins_3750000, lr_5.0, epochs_100 to make this recipe comparable with base model
 
 # network architecture
 # encoder related
@@ -13,7 +14,7 @@ adim: 512
 aheads: 8
 
 # hybrid CTC/attention
-mtlalpha: 0.3
+mtlalpha: 0.2
 
 # label smoothing
 lsm-weight: 0.1
@@ -24,7 +25,7 @@ batch-bins: 3750000
 # optimization related
 sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
 opt: noam
-accum-grad: 2
+accum-grad: 1
 grad-clip: 5
 patience: 0
 epochs: 100
@@ -34,7 +35,7 @@ dropout-rate: 0.1
 backend: pytorch
 model-module: "espnet.nets.pytorch_backend.e2e_asr_transformerz_yzl23:E2E"
 transformer-input-layer: conv2d     # encoder architecture type
-transformer-lr: 10.0
+transformer-lr: 5.0
 transformer-warmup-steps: 25000
 transformer-attn-dropout-rate: 0.0
 transformer-length-normalized-loss: false
