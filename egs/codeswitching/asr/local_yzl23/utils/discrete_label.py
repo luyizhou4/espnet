@@ -10,7 +10,7 @@ def main():
     ref_file = sys.argv[1]
     out_file = sys.argv[2]
 
-    with open(ref_file, 'r+') as r_fd:
+    with open(ref_file, 'r') as r_fd:
         with open(out_file, 'w+') as w_fd:
             for line in r_fd.readlines():
                 if line.strip():
