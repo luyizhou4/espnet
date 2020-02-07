@@ -76,6 +76,10 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
+
+        # yzl23 config 
+        group.add_argument('--pretrained-jca-model', default='', type=str,
+                           help='pretrained-jca-model path')
         return parser
 
     @property
@@ -149,8 +153,17 @@ class E2E(ASRInterface, torch.nn.Module):
     def reset_parameters(self, args):
         """Initialize parameters."""
         # initialize parameters
-        initialize(self, args.transformer_init)
-
+        if args.pretrained_jca_model:
+            path = args.pretrained_jca_model
+            logging.warning("load pretrained asr model from {}".format(path))
+            if 'snapshot' in path:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
+            else:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            self.load_state_dict(model_state_dict, strict=False)
+            del model_state_dict
+        else:
+            initialize(self, args.transformer_init)
     def forward(self, xs_pad, ilens, ys_pad):
         """E2E forward.
 
