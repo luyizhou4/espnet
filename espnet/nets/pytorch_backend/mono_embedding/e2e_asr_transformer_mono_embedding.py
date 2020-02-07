@@ -209,6 +209,8 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='mono-lingual embedding feature dimension')
         group.add_argument('--pretrained-jca-model', default='', type=str,
                            help='pretrained-jca-model path')
+        group.add_argument('--cn-emb-only', default=False, type=strtobool,
+                           help='only use cn embedding')
         return parser
 
     @property
@@ -278,6 +280,8 @@ class E2E(ASRInterface, torch.nn.Module):
 
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
+        self.cn_emb_only = args.cn_emb_only
+        self.bnf_dim = args.bnf_dim
         self.reset_parameters(args) # reset params at the last
 
     def reset_parameters(self, args):
@@ -312,6 +316,8 @@ class E2E(ASRInterface, torch.nn.Module):
         bnf_feats = bnf_feats[:, :max(bnf_feats_lens)] # for data parallel
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
+        if self.cn_emb_only:
+            bnf_feats = bnf_feats[:, :, :self.bnf_dim]
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask, bnf_feats)
         self.hs_pad = hs_pad
 
