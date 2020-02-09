@@ -20,13 +20,141 @@ from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
-from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
 from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSmoothingLoss
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.scorers.ctc import CTCPrefixScorer
+
+
+"""Encoder definition."""
+from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
+from espnet.nets.pytorch_backend.transformer.encoder_layer import EncoderLayer
+from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
+from espnet.nets.pytorch_backend.transformer.multi_layer_conv import Conv1dLinear
+from espnet.nets.pytorch_backend.transformer.multi_layer_conv import MultiLayeredConv1d
+from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import PositionwiseFeedForward
+from espnet.nets.pytorch_backend.transformer.repeat import repeat
+from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling
+
+
+class Encoder(torch.nn.Module):
+    """Transformer encoder module.
+
+    :param int idim: input dim
+    :param int attention_dim: dimention of attention
+    :param int attention_heads: the number of heads of multi head attention
+    :param int linear_units: the number of units of position-wise feed forward
+    :param int num_blocks: the number of decoder blocks
+    :param float dropout_rate: dropout rate
+    :param float attention_dropout_rate: dropout rate in attention
+    :param float positional_dropout_rate: dropout rate after adding positional encoding
+    :param str or torch.nn.Module input_layer: input layer type
+    :param class pos_enc_class: PositionalEncoding or ScaledPositionalEncoding
+    :param bool normalize_before: whether to use layer_norm before the first block
+    :param bool concat_after: whether to concat attention layer's input and output
+        if True, additional linear will be applied. i.e. x -> x + linear(concat(x, att(x)))
+        if False, no additional linear will be applied. i.e. x -> x + att(x)
+    :param str positionwise_layer_type: linear of conv1d
+    :param int positionwise_conv_kernel_size: kernel size of positionwise conv1d layer
+    :param int padding_idx: padding_idx for input_layer=embed
+    """
+
+    def __init__(self, idim,
+                 attention_dim=256,
+                 attention_heads=4,
+                 linear_units=2048,
+                 num_blocks=6,
+                 dropout_rate=0.1,
+                 positional_dropout_rate=0.1,
+                 attention_dropout_rate=0.0,
+                 input_layer="conv2d",
+                 pos_enc_class=PositionalEncoding,
+                 normalize_before=True,
+                 concat_after=False,
+                 positionwise_layer_type="linear",
+                 positionwise_conv_kernel_size=1,
+                 padding_idx=-1,
+                 bnf_dim=512):
+        """Construct an Encoder object."""
+        super(Encoder, self).__init__()
+
+        if input_layer == "linear":
+            self.embed = torch.nn.Sequential(
+                torch.nn.Linear(idim, attention_dim),
+                torch.nn.LayerNorm(attention_dim),
+                torch.nn.Dropout(dropout_rate),
+                torch.nn.ReLU(),
+                pos_enc_class(attention_dim, positional_dropout_rate)
+            )
+        elif input_layer == "conv2d":
+            self.embed = Conv2dSubsampling(idim, attention_dim, dropout_rate)
+        elif input_layer == "embed":
+            self.embed = torch.nn.Sequential(
+                torch.nn.Embedding(idim, attention_dim, padding_idx=padding_idx),
+                pos_enc_class(attention_dim, positional_dropout_rate)
+            )
+        elif isinstance(input_layer, torch.nn.Module):
+            self.embed = torch.nn.Sequential(
+                input_layer,
+                pos_enc_class(attention_dim, positional_dropout_rate),
+            )
+        elif input_layer is None:
+            self.embed = torch.nn.Sequential(
+                pos_enc_class(attention_dim, positional_dropout_rate)
+            )
+        else:
+            raise ValueError("unknown input_layer: " + input_layer)
+        self.normalize_before = normalize_before
+        if positionwise_layer_type == "linear":
+            positionwise_layer = PositionwiseFeedForward
+            positionwise_layer_args = (attention_dim, linear_units, dropout_rate)
+        elif positionwise_layer_type == "conv1d":
+            positionwise_layer = MultiLayeredConv1d
+            positionwise_layer_args = (attention_dim, linear_units, positionwise_conv_kernel_size, dropout_rate)
+        elif positionwise_layer_type == "conv1d-linear":
+            positionwise_layer = Conv1dLinear
+            positionwise_layer_args = (attention_dim, linear_units, positionwise_conv_kernel_size, dropout_rate)
+        else:
+            raise NotImplementedError("Support only linear or conv1d.")
+        self.encoders = repeat(
+            num_blocks,
+            lambda: EncoderLayer(
+                attention_dim,
+                MultiHeadedAttention(attention_heads, attention_dim, attention_dropout_rate),
+                positionwise_layer(*positionwise_layer_args),
+                dropout_rate,
+                normalize_before,
+                concat_after
+            )
+        )
+        if self.normalize_before:
+            self.after_norm = LayerNorm(attention_dim)
+
+        # bnf related
+        self.bnf_proj = torch.nn.Linear(attention_dim+bnf_dim, attention_dim)
+
+    def forward(self, xs, masks, bnf_feats):
+        """Embed positions in tensor.
+
+        :param torch.Tensor xs: input tensor
+        :param torch.Tensor masks: input mask
+        :return: position embedded tensor and mask
+        :rtype Tuple[torch.Tensor, torch.Tensor]:
+        """
+        if isinstance(self.embed, Conv2dSubsampling):
+            xs, masks = self.embed(xs, masks)
+        else:
+            xs = self.embed(xs)
+        # transformer encoders
+        xs, masks = self.encoders(xs, masks)
+        if self.normalize_before:
+            xs = self.after_norm(xs)
+        # here we concat xs and bnf_feats
+        xs = torch.cat((xs, bnf_feats), dim=-1)
+        xs = self.bnf_proj(xs)
+        return xs, masks
 
 
 class E2E(ASRInterface, torch.nn.Module):
@@ -76,8 +204,9 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
-
-        # yzl23 config 
+        # bnf related
+        group.add_argument('--bnf-dim', default=512, type=int,
+                           help='mono-lingual embedding feature dimension')
         group.add_argument('--pretrained-jca-model', default='', type=str,
                            help='pretrained-jca-model path')
         return parser
@@ -106,7 +235,8 @@ class E2E(ASRInterface, torch.nn.Module):
             input_layer=args.transformer_input_layer,
             dropout_rate=args.dropout_rate,
             positional_dropout_rate=args.dropout_rate,
-            attention_dropout_rate=args.transformer_attn_dropout_rate
+            attention_dropout_rate=args.transformer_attn_dropout_rate,
+            bnf_dim=args.bnf_dim
         )
         self.decoder = Decoder(
             odim=odim,
@@ -164,7 +294,8 @@ class E2E(ASRInterface, torch.nn.Module):
             del model_state_dict
         else:
             initialize(self, args.transformer_init)
-    def forward(self, xs_pad, ilens, ys_pad):
+
+    def forward(self, xs_pad, ilens, ys_pad, bnf_feats, bnf_feats_lens):
         """E2E forward.
 
         :param torch.Tensor xs_pad: batch of padded source sequences (B, Tmax, idim)
@@ -178,9 +309,10 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: float
         """
         # 1. forward encoder
+        bnf_feats = bnf_feats[:, :max(bnf_feats_lens)] # for data parallel
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask, bnf_feats)
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -252,8 +384,10 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: torch.Tensor
         """
         self.eval()
-        x = torch.as_tensor(x).unsqueeze(0) # (B, T, D) with #B=1
-        enc_output, _ = self.encoder(x, None)
+        fbank_feats, bnf_feats = x
+        x = torch.as_tensor(fbank_feats).unsqueeze(0) # (B, T, D) with #B=1
+        bnf_feats = torch.as_tensor(bnf_feats).unsqueeze(0)
+        enc_output, _ = self.encoder(x, None, bnf_feats)
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -262,15 +396,17 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
 
-    def store_penultimate_state(self, xs_pad, ilens, ys_pad):
+    def store_penultimate_state(self, xs_pad, ilens, ys_pad, bnf_feats, bnf_feats_lens):
+        bnf_feats = bnf_feats[:, :max(bnf_feats_lens)] # for data parallel
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
-        penultimate_state = hs_pad
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask, bnf_feats)
+        self.hs_pad = hs_pad
+
         # forward decoder
-        # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-        # ys_mask = target_mask(ys_in_pad, self.ignore_id)
-        # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
+        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+        ys_mask = target_mask(ys_in_pad, self.ignore_id)
+        pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
 
         # plot penultimate_state, (B,T,att_dim)
         return penultimate_state.squeeze(0).detach().cpu().numpy()
@@ -502,7 +638,7 @@ class E2E(ASRInterface, torch.nn.Module):
         logging.info('normalized log probability: ' + str(nbest_hyps[0]['score'] / len(nbest_hyps[0]['yseq'])))
         return nbest_hyps
 
-    def calculate_all_attentions(self, xs_pad, ilens, ys_pad):
+    def calculate_all_attentions(self, xs_pad, ilens, ys_pad, moe_coes, moe_coe_lens):
         """E2E attention calculation.
 
         :param torch.Tensor xs_pad: batch of padded input sequences (B, Tmax, idim)
@@ -514,7 +650,7 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: float ndarray
         """
         with torch.no_grad():
-            self.forward(xs_pad, ilens, ys_pad)
+            self.forward(xs_pad, ilens, ys_pad, moe_coes, moe_coe_lens)
         ret = dict()
         for name, m in self.named_modules():
             if isinstance(m, MultiHeadedAttention):
