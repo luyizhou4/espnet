@@ -27,5 +27,9 @@ export LD_LIBRARY_PATH=/mnt/lustre/cm/shared/global/src/dev/gcc/7.3.0/lib64:$LD_
 # PYTHONPATH
 export PYTHONPATH=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet:$PYTHONPATH
 
+# PYTHONPATH
+export PYTHONPATH=/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs:$PYTHONPATH
 
+module use /mnt/lustre/sjtu/users/yzl23/tools/modulefiles/
+module load kaldi_tools/kaldi-io-for-python
 
