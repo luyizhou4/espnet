@@ -80,6 +80,8 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained cn ctc model')
         group.add_argument('--pretrained-en-ctc-model', default='', type=str,
                          help='pretrained en ctc model')
+        group.add_argument('--pretrained-mlme-model', default='', type=str,
+                         help='pretrained multi-lingual multi-encoder model')
         return parser
 
     @property
@@ -162,6 +164,15 @@ class E2E(ASRInterface, torch.nn.Module):
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
 
+        logging.warning("Model total size: {}M, requires_grad size: {}M"
+                .format(self.count_parameters() / 1e6, self.count_parameters(requires_grad=True) / 1e6))
+
+    def count_parameters(self, requires_grad=False):
+        if requires_grad:
+            return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        else:
+            return sum(p.numel() for p in self.parameters())
+
     def reset_parameters(self, args):
         """Initialize parameters."""
         
@@ -183,7 +194,18 @@ class E2E(ASRInterface, torch.nn.Module):
             return model_state_dict
         
         # initialize parameters
-        if args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
+        if args.pretrained_mlme_model:
+            logging.warning("loading pretrained mlme model for parallel encoder")
+            # still need to initialize the 'other' params
+            initialize(self, args.transformer_init)
+            path = args.pretrained_mlme_model
+            if 'snapshot' in path:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
+            else:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            self.load_state_dict(model_state_dict, strict=False)
+            del model_state_dict
+        elif args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
             logging.warning("loading pretrained ctc model for parallel encoder")
             # still need to initialize the 'other' params
             initialize(self, args.transformer_init)
