@@ -223,7 +223,6 @@ class Decoder(ScorerInterface, torch.nn.Module):
 
         # Note: moe_coes (B, T, 2, 1), transform it to (B, 1, 2, 1) for decoder usage
         moe_coes = moe_coes[:, 0].unsqueeze(1) # choose t=0 coefficient (since it's constant along time axis)
-        logging.warning("moe coes shape: {}".format(moe_coes.shape))
         x, tgt_mask, memory, memory_mask, moe_coes = self.decoders(x, tgt_mask, memory, memory_mask, moe_coes)
         if self.normalize_before:
             x = self.after_norm(x)
