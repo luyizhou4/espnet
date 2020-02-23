@@ -80,8 +80,6 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained cn ctc model')
         group.add_argument('--pretrained-en-ctc-model', default='', type=str,
                          help='pretrained en ctc model')
-        group.add_argument('--pretrained-mlme-model', default='', type=str,
-                         help='pretrained multi-lingual multi-encoder model')
         return parser
 
     @property
@@ -121,11 +119,10 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
-        self.parallel_encoder_mlp = torch.nn.Linear(2*args.adim, args.adim, bias=True)
         self.decoder = Decoder(
             odim=odim,
-            attention_dim=args.adim,
-            attention_heads=args.aheads,
+            attention_dim=2*args.adim,
+            attention_heads=2*args.aheads,
             linear_units=args.dunits,
             num_blocks=args.dlayers,
             dropout_rate=args.dropout_rate,
@@ -147,7 +144,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
         if args.mtlalpha > 0.0:
-            self.ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
+            self.ctc = CTC(odim, 2*args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
         else:
             self.ctc = None
 
@@ -163,7 +160,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
-
+        
         logging.warning("Model total size: {}M, requires_grad size: {}M"
                 .format(self.count_parameters() / 1e6, self.count_parameters(requires_grad=True) / 1e6))
 
@@ -194,18 +191,7 @@ class E2E(ASRInterface, torch.nn.Module):
             return model_state_dict
         
         # initialize parameters
-        if args.pretrained_mlme_model:
-            logging.warning("loading pretrained mlme model for parallel encoder")
-            # still need to initialize the 'other' params
-            initialize(self, args.transformer_init)
-            path = args.pretrained_mlme_model
-            if 'snapshot' in path:
-                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
-            else:
-                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
-            self.load_state_dict(model_state_dict, strict=False)
-            del model_state_dict
-        elif args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
+        if args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
             logging.warning("loading pretrained ctc model for parallel encoder")
             # still need to initialize the 'other' params
             initialize(self, args.transformer_init)
@@ -242,7 +228,6 @@ class E2E(ASRInterface, torch.nn.Module):
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         # concat & mlp 
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.parallel_encoder_mlp(hs_pad)
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -253,9 +238,9 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
+            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, 2*self.adim), hs_len, ys_pad)
             if self.error_calculator is not None:
-                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
+                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, 2*self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
         if self.mtlalpha == 1:
@@ -314,7 +299,6 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        enc_output = self.parallel_encoder_mlp(enc_output)
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -330,11 +314,10 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.parallel_encoder_mlp(hs_pad)
-        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad, hs_pad), dim=-1)
+        penultimate_state = hs_pad
         # self.hs_pad = hs_pad
 
-        # forward decoder
+        # # forward decoder
         # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
         # ys_mask = target_mask(ys_in_pad, self.ignore_id)
         # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
