@@ -92,9 +92,7 @@ class Encoder(torch.nn.Module):
                  aux_model_path=None,
 		 aux_has_linear=False,
                  aux_n_bn=None,
-                 aux_pos=None,
-                 preprocess_conf=None,
-                 preprocess_args=None):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
+                 aux_pos=None):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
     
@@ -168,16 +166,7 @@ class Encoder(torch.nn.Module):
         )
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
-        
-        
-        if preprocess_conf is not None:
-            self.preprocessing = Transformation(preprocess_conf)
             
-        if preprocess_args is None:
-            self.preprocess_args = {}
-        else:
-            assert isinstance(preprocess_args, dict), type(preprocess_args)
-            self.preprocess_args = dict(preprocess_args)
 
     def forward(self, xs, masks):
         """Embed positions in tensor.

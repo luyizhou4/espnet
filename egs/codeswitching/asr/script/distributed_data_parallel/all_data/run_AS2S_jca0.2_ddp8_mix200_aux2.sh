@@ -5,9 +5,9 @@
 #SBATCH -n 1
 #SBATCH -c 3
 #SBATCH -o logs/ddp.%j
-#SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071,gqxx-01-057,gqxx-01-056,gqxx-01-060,gqxx-01-059,gqxx-01-058,gqxx-01-064,gqxx-01-174
+#SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071
 #SBATCH --mem=50G
-####SBATCH --array=1-8
+#SBATCH --array=1-8
 
 # Copyright 2017 Johns Hopkins University (Shinji Watanabe)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
@@ -22,12 +22,14 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 # ddp related
 rank=$((SLURM_ARRAY_TASK_ID-1))
 world_size=$SLURM_ARRAY_TASK_COUNT
-world_size=8
+#rank=1
+#world_size=4
 
+echo "world_size="$SLURM_ARRAY_TASK_COUNT
 
 # general configuration
 backend=pytorch
-stage=4        # start from 0 if you need to start from data preparation
+stage=3        # start from 0 if you need to start from data preparation
 stop_stage=100
 ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1
@@ -42,7 +44,7 @@ n_iter_processes=2
 mtlalpha=0.2
 
 preprocess_config=conf/specaug.yaml 
-train_config=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/conf/train_alldata_large.yaml
+train_config=conf/train_alldata_aux2.yaml
 decode_config=conf/decode.yaml
 
 # decoding parameter
@@ -57,14 +59,14 @@ set -e
 set -u
 set -o pipefail
 
-train_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/cn480_lib100_mix200/data.json
+train_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/mix200/data.json
 valid_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/dev_mix20/data.json
 
-tag=ddp_all_data_tf-large/AS2S_base_jca${mtlalpha}_ddp${world_size}_cn480-lib100-mix200
+tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_mix200_aux2
 expdir=exp/${tag}
 mkdir -p ${expdir}
 
-
+echo '---------------------------------------------'
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     echo "stage 3: Network Training"
     # store config files
@@ -73,7 +75,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         cp ${train_config} ${expdir}/
     fi
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train_ddp.py \
+        asr_train_aux2.py \
         --rank ${rank} \
         --world-size ${world_size} \
         --config ${train_config} \
@@ -90,12 +92,12 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --report-interval-iters ${log} \
         --n-iter-processes ${n_iter_processes} \
         --mtlalpha ${mtlalpha} \
-        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23:E2E" \
+        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E" \
         --train-json ${train_json} \
         --valid-json ${valid_json}
 fi
 
-#if [ $rank -eq 0 ]; then
+if [ $rank -eq 0 ]; then
 
     decode_dir="dev_mix20_beam8"
     if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
@@ -216,4 +218,4 @@ fi
         # compute mer
         python ./local_yzl23/utils/compute-mer.py ${expdir}/${decode_dir}/ref.word.final.txt ${expdir}/${decode_dir}/hyp.word.final.txt 2>&1 | tee ${expdir}/${decode_dir}/score.result
     fi
-#fi
+fi

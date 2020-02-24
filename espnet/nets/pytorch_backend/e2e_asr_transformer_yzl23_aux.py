@@ -106,9 +106,7 @@ class E2E(ASRInterface, torch.nn.Module):
             aux_model_path=args.aux_model_path,
             aux_has_linear=args.aux_has_linear,
             aux_n_bn=args.aux_n_bn,
-            aux_pos=args.aux_pos,
-            preprocess_conf=args.preprocess_conf,
-            preprocess_args=None
+            aux_pos=args.aux_pos
         )
         self.decoder = Decoder(
             odim=odim,

@@ -22,14 +22,14 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 # ddp related
 rank=$((SLURM_ARRAY_TASK_ID-1))
 world_size=$SLURM_ARRAY_TASK_COUNT
-#rank=1
-#world_size=1
+#rank=0
+#world_size=8
 
 echo "world_size="$SLURM_ARRAY_TASK_COUNT
 
 # general configuration
 backend=pytorch
-stage=3        # start from 0 if you need to start from data preparation
+stage=4        # start from 0 if you need to start from data preparation
 stop_stage=100
 ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1
@@ -62,7 +62,7 @@ set -o pipefail
 train_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/cn480_lib100_mix200/data.json
 valid_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/dev_mix20/data.json
 
-tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_cn480-lib100-mix200_aux
+tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_cn480-lib100-mix200_dimred_aux
 expdir=exp/${tag}
 mkdir -p ${expdir}
 
