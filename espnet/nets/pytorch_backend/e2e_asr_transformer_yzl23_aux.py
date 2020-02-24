@@ -102,7 +102,13 @@ class E2E(ASRInterface, torch.nn.Module):
             input_layer=args.transformer_input_layer,
             dropout_rate=args.dropout_rate,
             positional_dropout_rate=args.dropout_rate,
-            attention_dropout_rate=args.transformer_attn_dropout_rate
+            attention_dropout_rate=args.transformer_attn_dropout_rate,
+            aux_model_path=args.aux_model_path,
+            aux_has_linear=args.aux_has_linear,
+            aux_n_bn=args.aux_n_bn,
+            aux_pos=args.aux_pos,
+            preprocess_conf=args.preprocess_conf,
+            preprocess_args=None
         )
         self.decoder = Decoder(
             odim=odim,
@@ -157,6 +163,7 @@ class E2E(ASRInterface, torch.nn.Module):
         :param torch.Tensor xs_pad: batch of padded source sequences (B, Tmax, idim)
         :param torch.Tensor ilens: batch of lengths of source sequences (B)
         :param torch.Tensor ys_pad: batch of padded target sequences (B, Lmax)
+        :param torch.Tensor uttid_list: batch of utterance id list  (B, )
         :return: ctc loass value
         :rtype: torch.Tensor
         :return: attention loss value
@@ -167,7 +174,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. forward encoder
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask, uttid_list)
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text

@@ -21,7 +21,7 @@ from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsamplin
 # auxiliary model relevant
 #from espnet.nets.pytorch_backend.e2e_lid_transformer import E2E as aux_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
-
+from espnet.transform.transformation import Transformation
 
 
 class AuxModel(torch.nn.Module):
@@ -39,6 +39,7 @@ class AuxModel(torch.nn.Module):
 	    self.odim = aux_trained_args.adim
 	    self.has_linear = has_linear
 	    if has_linear:
+	        print(aux_trained_args.adim, self.odim)
 	        self.odim = aux_n_bn 
 	        self.linear = torch.nn.Linear(aux_trained_args.adim, self.odim)
 	def forward(self, xs, masks):
@@ -91,7 +92,9 @@ class Encoder(torch.nn.Module):
                  aux_model_path=None,
 		 aux_has_linear=False,
                  aux_n_bn=None,
-                 aux_pos=None):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
+                 aux_pos=None,
+                 preprocess_conf=None,
+                 preprocess_args=None):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
     
@@ -140,6 +143,10 @@ class Encoder(torch.nn.Module):
         self.aux_model = None 
         self.aux_n_bn = None
         self.aux_pos = None
+        print('aux_model_path=', aux_model_path,
+              'aux_has_linear=', aux_has_linear,
+	      'aux_n_bn=', aux_n_bn,
+	      'aux_pos=', aux_pos, flush=True)
 
         if aux_model_path is not None:
             self.aux_model = AuxModel(aux_model_path, aux_n_bn, has_linear=aux_has_linear)
@@ -161,6 +168,16 @@ class Encoder(torch.nn.Module):
         )
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
+        
+        
+        if preprocess_conf is not None:
+            self.preprocessing = Transformation(preprocess_conf)
+            
+        if preprocess_args is None:
+            self.preprocess_args = {}
+        else:
+            assert isinstance(preprocess_args, dict), type(preprocess_args)
+            self.preprocess_args = dict(preprocess_args)
 
     def forward(self, xs, masks):
         """Embed positions in tensor.
@@ -171,20 +188,30 @@ class Encoder(torch.nn.Module):
         """
         # xs (b, t, f) 
         if self.aux_model is not None:
-            aux_emb, masks = self.aux_model(xs, masks) # (b, t, bn)
+            with torch.no_grad():
+                aux_emb, aux_masks = self.aux_model(xs, masks) # (b, t, bn)
     
+        xs = self.preprocess(xs, None, **self.preprocess_args)
+        
         if isinstance(self.embed, Conv2dSubsampling):
             xs, masks = self.embed(xs, masks)
         else:
             xs = self.embed(xs)
     
-        if self.aux_pos is "COVOUT":
+        # print('xs', xs.size(), 'masks', masks.size(), 'aux_masks', aux_masks.size(), '00', flush=True)
+        # print('aus_pos', self.aux_pos, flush=True)
+        if self.aux_pos == "COVOUT":
+            # print('xs', xs.size(), '1', flush=True)
             xs = torch.cat((xs, aux_emb), dim=2)
+            # print('xs', xs.size(), '2', flush=True)
             xs = self.aux_linear(xs) # (b, t, n_att+bn) -> (b,t,n_att)
+            # print('xs', xs.size(), '3', flush=True)
     
+        # print('xs', xs.size(), 'masks', masks.size(), 'aux_masks', aux_masks.size(), '01', flush=True)
         xs, masks = self.encoders(xs, masks)
     
-        if self.aux_pos is "ENOUT":
+        # print('xs', xs.size(), 'masks', masks.size(), 'aux_masks', aux_masks.size(), '02', flush=True)
+        if self.aux_pos == "ENOUT":
             # print('xs', xs.size(), '1')
             xs = torch.cat((xs, aux_emb), dim=2)
             # print('xs', xs.size(), '2')

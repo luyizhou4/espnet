@@ -290,7 +290,7 @@ def get_parser(parser=None, required=True):
     # auxiliry model config
     parser.add_argument('--aux-model-path', default=None, type=str,
 		    help='auxiliry model path')
-    parser.add_argument('--aux-has-linear', default=False, type=bool,
+    parser.add_argument('--aux-has-linear', default=False, type=strtobool,
 		    help='has-linear layer after auxiliry model')
     parser.add_argument('--aux-n-bn', default=None, type=int,
 		    help='only when aux-has-linear is True, aux_n_bn is meaningful. The dim of aux model bottleneck after linear')
