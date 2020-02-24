@@ -21,7 +21,6 @@ from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsamplin
 # auxiliary model relevant
 #from espnet.nets.pytorch_backend.e2e_lid_transformer import E2E as aux_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
-from espnet.transform.transformation import Transformation
 
 
 class AuxModel(torch.nn.Module):
@@ -180,7 +179,6 @@ class Encoder(torch.nn.Module):
             with torch.no_grad():
                 aux_emb, aux_masks = self.aux_model(xs, masks) # (b, t, bn)
     
-        xs = self.preprocess(xs, None, **self.preprocess_args)
         
         if isinstance(self.embed, Conv2dSubsampling):
             xs, masks = self.embed(xs, masks)
