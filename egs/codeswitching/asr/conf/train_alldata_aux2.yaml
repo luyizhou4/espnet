@@ -34,7 +34,7 @@ dropout-rate: 0.1
 
 # transformer specific setting
 backend: pytorch
-model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E"
+model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux3:E2E"
 transformer-input-layer: conv2d     # encoder architecture type
 transformer-lr: 5.0
 transformer-warmup-steps: 25000
@@ -44,6 +44,6 @@ transformer-init: pytorch
 
 # auxiliary model setting
 aux-model-path: "/mnt/lustre/sjtu/users/mkh96/wordspace/asr/codeswitch/exp/phone_classifier/transformer_layer12_lsm0.0_ep100/results/snapshot.ep.100"
-aux-has-linear: "False"
-aux-n-bn: 64
-aux-pos: "COVOUT"
+aux-has-linear: "True"
+#aux-n-bn: 64
+aux-pos: "ENOUT"

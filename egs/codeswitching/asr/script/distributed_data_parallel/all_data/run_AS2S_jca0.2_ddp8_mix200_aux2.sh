@@ -22,8 +22,8 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 # ddp related
 rank=$((SLURM_ARRAY_TASK_ID-1))
 world_size=$SLURM_ARRAY_TASK_COUNT
-#rank=1
-#world_size=4
+#rank=0
+#world_size=8
 
 echo "world_size="$SLURM_ARRAY_TASK_COUNT
 
@@ -75,7 +75,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         cp ${train_config} ${expdir}/
     fi
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train_aux2.py \
+        asr_train_ddp3.py \
         --rank ${rank} \
         --world-size ${world_size} \
         --config ${train_config} \
@@ -92,7 +92,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --report-interval-iters ${log} \
         --n-iter-processes ${n_iter_processes} \
         --mtlalpha ${mtlalpha} \
-        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E" \
+        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux3:E2E" \
         --train-json ${train_json} \
         --valid-json ${valid_json}
 fi
@@ -122,7 +122,7 @@ if [ $rank -eq 0 ]; then
             ngpu=0
 
             slurm.pl JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog.py \
+                asr_recog3.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
                 --backend ${backend} \
@@ -183,7 +183,7 @@ if [ $rank -eq 0 ]; then
             ngpu=0
 
             slurm.pl JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog.py \
+                asr_recog3.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
                 --backend ${backend} \

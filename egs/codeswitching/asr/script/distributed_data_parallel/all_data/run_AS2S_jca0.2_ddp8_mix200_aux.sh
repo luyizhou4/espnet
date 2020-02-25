@@ -5,7 +5,7 @@
 #SBATCH -n 1
 #SBATCH -c 3
 #SBATCH -o logs/ddp.%j
-#SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071
+#SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071,gqxx-01-177,gqxx-01-178
 #SBATCH --mem=50G
 #SBATCH --array=1-8
 
@@ -75,7 +75,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         cp ${train_config} ${expdir}/
     fi
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train_ddp.py \
+        asr_train_ddp3.py \
         --rank ${rank} \
         --world-size ${world_size} \
         --config ${train_config} \
@@ -92,7 +92,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --report-interval-iters ${log} \
         --n-iter-processes ${n_iter_processes} \
         --mtlalpha ${mtlalpha} \
-        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E" \
+        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux3:E2E" \
         --train-json ${train_json} \
         --valid-json ${valid_json}
 fi
@@ -122,7 +122,7 @@ if [ $rank -eq 0 ]; then
             ngpu=0
 
             slurm.pl JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog.py \
+                asr_recog3.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
                 --backend ${backend} \
@@ -183,7 +183,7 @@ if [ $rank -eq 0 ]; then
             ngpu=0
 
             slurm.pl JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog.py \
+                asr_recog3.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
                 --backend ${backend} \
