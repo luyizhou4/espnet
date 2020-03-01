@@ -44,5 +44,6 @@ transformer-init: pytorch
 
 # auxiliary model setting
 aux-model-path: "/mnt/lustre/sjtu/users/mkh96/wordspace/asr/codeswitch/exp/phone_classifier/transformer_layer12_lsm0.0_ep100/results/snapshot.ep.100"
-aux-has-linear: "False"
+aux-has-linear: "True"
+#aux-n-bn: 64
 aux-pos: "ENOUT"

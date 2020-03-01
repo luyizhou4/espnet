@@ -283,18 +283,19 @@ def get_parser(parser=None, required=True):
                            help='mixture of experts mode, this is used to load moe-coe in CustomConverterMoE')
     # distributed data parallel config
     parser.add_argument('--rank', default=0, type=int,
-                        help='rank of worker')
+		    help='rank of worker')
     parser.add_argument('--world-size', default=1, type=int,
-                        help='number of workers')
+		    help='number of workers')
+
     # auxiliry model config
     parser.add_argument('--aux-model-path', default=None, type=str,
-                        help='auxiliry model path')
+		    help='auxiliry model path')
     parser.add_argument('--aux-has-linear', default=False, type=strtobool,
-                        help='has-linear layer after auxiliry model')
+		    help='has-linear layer after auxiliry model')
     parser.add_argument('--aux-n-bn', default=None, type=int,
-                        help='only when aux-has-linear is True, aux_n_bn is meaningful. The dim of aux model bottleneck after linear')
+		    help='only when aux-has-linear is True, aux_n_bn is meaningful. The dim of aux model bottleneck after linear')
     parser.add_argument('--aux-pos', default=None, type=str,
-		        help='position where auxiliry bottleneck concatenate: COVOUT, ENOUT')
+		    help='position where auxiliry bottleneck concatenate: COVOUT, ENOUT')
     return parser
 
 
@@ -302,9 +303,6 @@ def main(cmd_args):
     """Run the main training function."""
     parser = get_parser()
     args, _ = parser.parse_known_args(cmd_args)
-    # print(args)
-    # import sys
-    # sys.exit(0)
     if args.backend == "chainer" and args.train_dtype != "float32":
         raise NotImplementedError(
             f"chainer backend does not support --train-dtype {args.train_dtype}."
@@ -384,33 +382,16 @@ def main(cmd_args):
     # train
     logging.info('backend = ' + args.backend)
 
-    # distributed setting
-    if not os.path.exists(args.outdir):
-        os.makedirs(args.outdir, exist_ok=True)
-    sync_file = os.path.abspath(args.outdir) + '/synchronized'
-    if args.rank == 0:
-        if os.path.exists(sync_file):
-            os.remove(sync_file)
-    torch.distributed.init_process_group(
-            backend = 'nccl',
-            init_method = 'file://' + sync_file,
-            world_size = args.world_size,
-            rank = args.rank)
-    torch.set_num_threads(2)
-    logging.warning("Rank: {} init fine".format(args.rank))
-
     if args.num_spkrs == 1:
         if args.backend == "chainer":
-            raise Exception('ddp training currently not support chainer mode')
             from espnet.asr.chainer_backend.asr import train
             train(args)
         elif args.backend == "pytorch":
-            from espnet.asr.pytorch_backend.asr_ddp import train
+            from espnet.asr.pytorch_backend.asr3 import train
             train(args)
         else:
             raise ValueError("Only chainer and pytorch are supported.")
     else:
-        raise Exception('ddp training currently not support multi-speaker mode')
         # FIXME(kamo): Support --model-module
         if args.backend == "pytorch":
             from espnet.asr.pytorch_backend.asr_mix import train

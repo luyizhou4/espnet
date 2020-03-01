@@ -20,7 +20,7 @@ from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
-from espnet.nets.pytorch_backend.transformer.encoder_aux import Encoder
+from espnet.nets.pytorch_backend.transformer.encoder_aux3 import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
 from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSmoothingLoss
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
@@ -106,7 +106,8 @@ class E2E(ASRInterface, torch.nn.Module):
             aux_model_path=args.aux_model_path,
             aux_has_linear=args.aux_has_linear,
             aux_n_bn=args.aux_n_bn,
-            aux_pos=args.aux_pos
+            aux_pos=args.aux_pos,
+            preprocess_conf=args.preprocess_conf
         )
         self.decoder = Decoder(
             odim=odim,
@@ -155,13 +156,13 @@ class E2E(ASRInterface, torch.nn.Module):
         # initialize parameters
         initialize(self, args.transformer_init)
 
-    def forward(self, xs_pad, ilens, ys_pad):
+    def forward(self, xs_pad, ilens, ys_pad, train):
         """E2E forward.
 
         :param torch.Tensor xs_pad: batch of padded source sequences (B, Tmax, idim)
         :param torch.Tensor ilens: batch of lengths of source sequences (B)
         :param torch.Tensor ys_pad: batch of padded target sequences (B, Lmax)
-        :param torch.Tensor uttid_list: batch of utterance id list  (B, )
+        :param bool: train  train mode 
         :return: ctc loass value
         :rtype: torch.Tensor
         :return: attention loss value
@@ -172,7 +173,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. forward encoder
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask, uttid_list)
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask, train)
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -244,8 +245,8 @@ class E2E(ASRInterface, torch.nn.Module):
         :rtype: torch.Tensor
         """
         self.eval()
-        x = torch.as_tensor(x).unsqueeze(0) # (B, T, D) with #B=1
-        enc_output, _ = self.encoder(x, None)
+        x[0] = torch.as_tensor(x[0]).unsqueeze(0) # (B, T, D) with #B=1
+        enc_output, _ = self.encoder(x[0], None, x[1])
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -494,19 +495,20 @@ class E2E(ASRInterface, torch.nn.Module):
         logging.info('normalized log probability: ' + str(nbest_hyps[0]['score'] / len(nbest_hyps[0]['yseq'])))
         return nbest_hyps
 
-    def calculate_all_attentions(self, xs_pad, ilens, ys_pad):
+    def calculate_all_attentions(self, xs_pad, ilens, ys_pad, train):
         """E2E attention calculation.
 
         :param torch.Tensor xs_pad: batch of padded input sequences (B, Tmax, idim)
         :param torch.Tensor ilens: batch of lengths of input sequences (B)
         :param torch.Tensor ys_pad: batch of padded token id sequence tensor (B, Lmax)
+        :param bool train: train mode or not
         :return: attention weights with the following shape,
             1) multi-head case => attention weights (B, H, Lmax, Tmax),
             2) other case => attention weights (B, Lmax, Tmax).
         :rtype: float ndarray
         """
         with torch.no_grad():
-            self.forward(xs_pad, ilens, ys_pad)
+            self.forward(xs_pad, ilens, ys_pad, train)
         ret = dict()
         for name, m in self.named_modules():
             if isinstance(m, MultiHeadedAttention):
