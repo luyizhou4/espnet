@@ -162,6 +162,14 @@ class E2E(ASRInterface, torch.nn.Module):
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
+        logging.warning("Model total size: {}M, requires_grad size: {}M"
+                .format(self.count_parameters(), self.count_parameters(requires_grad=True)))
+
+    def count_parameters(self, requires_grad=False):
+        if requires_grad:
+            return sum(p.numel() for p in self.parameters() if p.requires_grad) / 1024 / 1024
+        else:
+            return sum(p.numel() for p in self.parameters()) / 1024 / 1024
 
     def reset_parameters(self, args):
         """Initialize parameters."""

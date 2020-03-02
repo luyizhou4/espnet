@@ -124,8 +124,10 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
-        self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=True)
-        self.enc_proj_ln = LayerNorm(args.adim) # compatible with previous
+        # gated add module 
+        self.aggregation_module = torch.nn.ModuleList([
+            torch.nn.Linear(2*args.adim, 1),
+            torch.nn.Sigmoid()])
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -244,9 +246,13 @@ class E2E(ASRInterface, torch.nn.Module):
         # mlp moe forward
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        # concat & mlp 
+        # gated add module 
+        """ lambda = sigmoid(W_cn * cn_xs + w_en * en_xs + b)  #(B, T, 1)
+            xs = lambda * cn_xs + (1-lambda) * en_xs 
+        """
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -318,7 +324,8 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        enc_output = self.enc_proj_ln(self.enc_proj(enc_output))
+        lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
+        enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -334,8 +341,10 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
-        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad, hs_pad), dim=-1)
+
+        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
+        penultimate_state = lambda_
         # self.hs_pad = hs_pad
 
         # forward decoder

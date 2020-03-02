@@ -59,6 +59,3 @@ tools/PESQ*
 tools/hts_engine_API*
 tools/open_jtalk*
 tools/pyopenjtalk*
-
-#log
-egs/codeswitching/asr/logs/

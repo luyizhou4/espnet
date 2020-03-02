@@ -27,9 +27,6 @@ from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 
-# encoder output proj-layer layer norm, self-defined LN changes eps from 1e-5 to 1e-12
-# we just keep this usage as initial espnet setup
-from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -124,8 +121,6 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
-        self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=True)
-        self.enc_proj_ln = LayerNorm(args.adim) # compatible with previous
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -151,7 +146,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
         if args.mtlalpha > 0.0:
-            self.ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
+            self.ctc = CTC(odim, 2*args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
         else:
             self.ctc = None
 
@@ -169,13 +164,13 @@ class E2E(ASRInterface, torch.nn.Module):
         self.reset_parameters(args) # reset params at the last
 
         logging.warning("Model total size: {}M, requires_grad size: {}M"
-                .format(self.count_parameters(), self.count_parameters(requires_grad=True)))
+                .format(self.count_parameters() / 1e6, self.count_parameters(requires_grad=True) / 1e6))
 
     def count_parameters(self, requires_grad=False):
         if requires_grad:
-            return sum(p.numel() for p in self.parameters() if p.requires_grad) / 1024 / 1024
+            return sum(p.numel() for p in self.parameters() if p.requires_grad)
         else:
-            return sum(p.numel() for p in self.parameters()) / 1024 / 1024
+            return sum(p.numel() for p in self.parameters())
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -207,6 +202,10 @@ class E2E(ASRInterface, torch.nn.Module):
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
             else:
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            # remove ctc_lo here, shape mismatch
+            for k in list(model_state_dict.keys()):
+                if 'ctc_lo' in k:
+                    del model_state_dict[k]
             self.load_state_dict(model_state_dict, strict=False)
             del model_state_dict
         elif args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
@@ -246,7 +245,6 @@ class E2E(ASRInterface, torch.nn.Module):
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         # concat & mlp 
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -257,9 +255,9 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
+            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, 2*self.adim), hs_len, ys_pad)
             if self.error_calculator is not None:
-                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
+                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, 2*self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
         if self.mtlalpha == 1:
@@ -318,7 +316,6 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        enc_output = self.enc_proj_ln(self.enc_proj(enc_output))
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -334,7 +331,6 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
         penultimate_state = torch.cat((cn_hs_pad, en_hs_pad, hs_pad), dim=-1)
         # self.hs_pad = hs_pad
 
