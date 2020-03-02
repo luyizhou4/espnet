@@ -718,7 +718,21 @@ def recog(args):
         args (namespace): The program arguments.
     """
     set_deterministic_pytorch(args)
-    model, train_args = load_trained_model(args.model)
+    model, train_args = load_trained_model(args.model_aux)
+    oracle_model, oracle_train_args = load_trained_model(args.model_enc)
+
+    # change model encoder decoder network but keep the aux model
+    oracle_state_dict = oracle_model.state_dict()
+    state_dict = model.state_dict()
+    for k in state_dict:
+        if 'aux' not in str(k):
+            state_dict[k] = oracle_state_dict[k]
+        if k == 'encoder.aux_linear.weight' or k == 'encoder.aux_linear.bias':
+            print('update:', k)
+            state_dict[k] = oracle_state_dict[k]
+     
+    model.load_state_dict(state_dict)
+
     assert isinstance(model, ASRInterface)
     model.recog_args = args
     # read rnnlm

@@ -288,16 +288,10 @@ def get_parser(parser=None, required=True):
 		    help='number of workers')
 
     # auxiliry model config
-    parser.add_argument('--aux-model-path', default=None, type=str,
-		    help='auxiliry model path')
-    parser.add_argument('--aux-has-linear', default=False, type=strtobool,
-		    help='has-linear layer after auxiliry model')
-    parser.add_argument('--aux-n-bn', default=None, type=int,
-		    help='only when aux-has-linear is True, aux_n_bn is meaningful. The dim of aux model bottleneck after linear')
-    parser.add_argument('--aux-pos', default=None, type=str,
-		    help='position where auxiliry bottleneck concatenate: COVOUT, ENOUT')
-    parser.add_argument('--aux-only', default=False, type=strtobool,
-		    help='use aux emb as feature')
+    parser.add_argument('--phn-head-layer', default=0, type=int,
+		    help='phone head layer in encoder')
+    parser.add_argument('--mltbeta', default=0.5, type=float,
+            help='Multitask learning coefficient, alpha: alpha*ctc_loss + (1-alpha)*att_loss + beta * phn_loss ')
     return parser
 
 
@@ -389,7 +383,7 @@ def main(cmd_args):
             from espnet.asr.chainer_backend.asr import train
             train(args)
         elif args.backend == "pytorch":
-            from espnet.asr.pytorch_backend.asr2 import train
+            from espnet.asr.pytorch_backend.asr_aux_mlt_phn import train
             train(args)
         else:
             raise ValueError("Only chainer and pytorch are supported.")

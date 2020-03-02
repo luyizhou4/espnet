@@ -8,25 +8,43 @@ from distutils.util import strtobool
 
 import logging
 import math
-
+import chainer
+from chainer import reporter
 import torch
-
+from torch.nn import CrossEntropyLoss
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.pytorch_backend.ctc import CTC
 from espnet.nets.pytorch_backend.e2e_asr import CTC_LOSS_THRESHOLD
-from espnet.nets.pytorch_backend.e2e_asr import Reporter
+#from espnet.nets.pytorch_backend.e2e_asr import Reporter
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet.nets.pytorch_backend.transformer.decoder import Decoder
-from espnet.nets.pytorch_backend.transformer.encoder_aux2 import Encoder
+from espnet.nets.pytorch_backend.transformer.encoder_aux_mlt_phn import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
 from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSmoothingLoss
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.scorers.ctc import CTCPrefixScorer
+
+
+class Reporter(chainer.Chain):
+    """A chainer reporter wrapper."""
+
+    def report(self, loss_ctc, loss_att, acc, cer_ctc, cer, wer, mtl_loss, phn_loss, phn_acc):
+        """Report at every step."""
+        reporter.report({'loss_ctc': loss_ctc}, self)
+        reporter.report({'loss_att': loss_att}, self)
+        reporter.report({'acc': acc}, self)
+        reporter.report({'cer_ctc': cer_ctc}, self)
+        reporter.report({'cer': cer}, self)
+        reporter.report({'wer': wer}, self)
+        logging.info('mtl loss:' + str(mtl_loss))
+        reporter.report({'loss': mtl_loss}, self)
+        reporter.report({'phn_loss': phn_loss}, self)
+        reporter.report({'phn_acc': phn_acc}, self)
 
 
 class E2E(ASRInterface, torch.nn.Module):
@@ -103,8 +121,8 @@ class E2E(ASRInterface, torch.nn.Module):
             dropout_rate=args.dropout_rate,
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate,
-            aux_pos=args.aux_pos,
-            aux_only=args.aux_only
+            phn_head_layer=args.phn_head_layer,
+            phn_ignore_idx=ignore_id
         )
         self.decoder = Decoder(
             odim=odim,
@@ -130,6 +148,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # self.verbose = args.verbose
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
+        self.mltbeta = args.mltbeta
         if args.mtlalpha > 0.0:
             self.ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
         else:
@@ -170,7 +189,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. forward encoder
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask, uttid_list)
+        hs_pad, hs_mask, phn_out, phn_label = self.encoder(xs_pad, src_mask, uttid_list)
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -222,10 +241,22 @@ class E2E(ASRInterface, torch.nn.Module):
             self.loss = alpha * loss_ctc + (1 - alpha) * loss_att
             loss_att_data = float(loss_att)
             loss_ctc_data = float(loss_ctc)
+        
+        # multi-task phone loss
+        beta = self.mltbeta
+        # print(phn_out.size(), phn_label.size(), 'phn_out', 'phn_label')
+        phn_loss_fn = CrossEntropyLoss(ignore_index=self.ignore_id)
+        phn_loss  = phn_loss_fn(phn_out.view(-1, 128), phn_label.view(-1))
+        try:
+            phn_acc = th_accuracy(phn_out.view(-1, 128), phn_label, ignore_label=self.ignore_id)
+        except ZeroDivisionError:
+            print("ZeroDivisionError uttid_list:", uttid_list)
+
+        self.loss += beta * phn_loss
 
         loss_data = float(self.loss)
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
-            self.reporter.report(loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data)
+            self.reporter.report(loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data, phn_loss, phn_acc)
         else:
             logging.warning('loss (=%f) is not correct', loss_data)
         return self.loss

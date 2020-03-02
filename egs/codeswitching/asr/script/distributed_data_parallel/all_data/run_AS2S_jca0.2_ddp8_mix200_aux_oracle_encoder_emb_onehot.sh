@@ -1,13 +1,11 @@
 #!/bin/bash
 #SBATCH -J lib100
 #SBATCH -p gpu
-#SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -c 3
 #SBATCH -o logs/ddp.%j
 #SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071
 #SBATCH --mem=50G
-####SBATCH --array=1-8
 
 # Copyright 2017 Johns Hopkins University (Shinji Watanabe)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
@@ -25,11 +23,11 @@ world_size=$SLURM_ARRAY_TASK_COUNT
 rank=0
 world_size=8
 
-echo "world_size="$SLURM_ARRAY_TASK_COUNT
+echo rank $rank
 
 # general configuration
 backend=pytorch
-stage=4        # start from 0 if you need to start from data preparation
+stage=5        # start from 0 if you need to start from data preparation
 stop_stage=10
 ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1
@@ -43,10 +41,7 @@ accum_grad=1
 n_iter_processes=2
 mtlalpha=0.2
 
-suffix=$1
-
 preprocess_config=conf/specaug.yaml 
-train_config=conf/train_alldata_${suffix}.yaml
 decode_config=conf/decode.yaml
 
 # decoding parameter
@@ -61,43 +56,20 @@ set -e
 set -u
 set -o pipefail
 
-train_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/mix200/data.json
-valid_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/dev_mix20/data.json
 
-tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_mix200_${suffix}
+
+preprocess_config=conf/specaug.yaml
+#train_config=conf/train_alldata_aux_emb_onehot_enc.yaml
+decode_config=conf/decode.yaml
+
+
+tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_mix200_aux_oracle_encoder_emb_onehot
 expdir=exp/${tag}
+
+model_aux='/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/exp/ddp_all_data/lib_percentage/AS2S_base_jca0.2_ddp8_mix200_aux_emb_onehot_enc/results/model.last5.avg.best'
+model_enc='/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/exp/ddp_all_data/lib_percentage/AS2S_base_jca0.2_ddp8_mix200_aux_ali_enc/results/model.last5.avg.best'
 mkdir -p ${expdir}
 
-echo '---------------------------------------------'
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
-    echo "stage 3: Network Training"
-    # store config files
-    if [ $rank -eq 0 ]; then 
-        cp ${preprocess_config} ${expdir}/
-        cp ${train_config} ${expdir}/
-    fi
-    ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train_ddp2.py \
-        --rank ${rank} \
-        --world-size ${world_size} \
-        --config ${train_config} \
-        --preprocess-conf ${preprocess_config} \
-        --ngpu ${ngpu} \
-        --backend ${backend} \
-        --outdir ${expdir}/results \
-        --debugmode ${debugmode} \
-        --debugdir ${expdir} \
-        --minibatches ${N} \
-        --verbose ${verbose} \
-        --resume ${resume} \
-        --accum-grad ${accum_grad} \
-        --report-interval-iters ${log} \
-        --n-iter-processes ${n_iter_processes} \
-        --mtlalpha ${mtlalpha} \
-        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux2:E2E" \
-        --train-json ${train_json} \
-        --valid-json ${valid_json}
-fi
 
 if [ $rank -eq 0 ]; then
 
@@ -107,32 +79,36 @@ if [ $rank -eq 0 ]; then
         nj=48
         mkdir -p ${expdir}/${decode_dir}
         cp ${decode_config} ${expdir}/${decode_dir}
-        if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
+        #if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
         recog_model=model.last${n_average}.avg.best
-        average_checkpoints.py --backend ${backend} \
-                       --snapshots ${expdir}/results/snapshot.ep.* \
-                       --out ${expdir}/results/${recog_model} \
-                       --num ${n_average}
-        fi
+        #average_checkpoints.py --backend ${backend} \
+        #               --snapshots ${expdir}/results/snapshot.ep.* \
+        #               --out ${expdir}/results/${recog_model} \
+        #               --num ${n_average}
+        #fi
         pids=() # initialize pids
+        #todolist="11 14 22 32 34 39"
+        #for x in $todolist
+        #do
         (
             # split data
             dev_root=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/dev_mix20
             # splitjson.py --parts ${nj} ${dev_root}/data.json
 
             #### use CPU for decoding
-            ngpu=0 
-            ###  --num-threads 4
-            slurm.pl  --num-threads 6  JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog2.py \
+
+            ngpu=0
+            slurm.pl --num-threads 4 JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                asr_recog_ocl_enc_emb_onehot.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
                 --backend ${backend} \
                 --recog-json ${dev_root}/split${nj}utt/data.JOB.json \
                 --result-label ${expdir}/${decode_dir}/data.JOB.json \
-                --model ${expdir}/results/${recog_model}
-
+                --model-enc ${model_enc}  \
+                --model-aux ${model_aux}
         ) &
+        #done
         pids+=($!) # store background pids
         i=0; for pid in "${pids[@]}"; do wait ${pid} || ((++i)); done
         [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
@@ -169,7 +145,7 @@ if [ $rank -eq 0 ]; then
         mkdir -p ${expdir}/${decode_dir}
         cp ${decode_config} ${expdir}/${decode_dir}
         #if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]]; then
-        recog_model=model.last${n_average}.avg.best
+        #recog_model=model.last${n_average}.avg.best
         #average_checkpoints.py --backend ${backend} \
                        #--snapshots ${expdir}/results/snapshot.ep.* \
                        #--out ${expdir}/results/${recog_model} \
@@ -182,16 +158,17 @@ if [ $rank -eq 0 ]; then
             # splitjson.py --parts ${nj} ${dev_root}/data.json
 
             #### use CPU for decoding
-            ngpu=0 
-            #### 
-            slurm.pl --num-threads 6  JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
-                asr_recog2.py \
+            ngpu=0
+
+            slurm.pl --num-threads 4 JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+                asr_recog_ocl_enc_emb_onehot.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
                 --backend ${backend} \
                 --recog-json ${dev_root}/split${nj}utt/data.JOB.json \
                 --result-label ${expdir}/${decode_dir}/data.JOB.json \
-                --model ${expdir}/results/${recog_model}
+                --model-enc ${model_enc} \
+                --model-aux ${model_aux}
 
         ) &
         pids+=($!) # store background pids

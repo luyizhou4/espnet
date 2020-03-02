@@ -49,13 +49,16 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
-from espnet.utils.io_utils3 import LoadInputsAndTargets
+from espnet.utils.io_utils2 import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler, PerturbSamplingEnabler
 from espnet.utils.training.tensorboard_logger import TensorboardLogger
 from espnet.utils.training.train_utils import check_early_stop
 from espnet.utils.training.train_utils import set_early_stop
+
+# ddp related
+from apex.parallel import DistributedDataParallel, convert_syncbn_model
 
 import matplotlib
 matplotlib.use('Agg')
@@ -171,7 +174,6 @@ class CustomUpdater(StandardUpdater):
         # Get the next batch (a list of json files)
         batch = train_iter.next()
         # self.iteration += 1 # Increase may result in early report, which is done in other place automatically.
-        # x = tuple(arr.to(self.device) if arr is not None else None
         x = tuple(arr.to(self.device) if isinstance(arr, torch.Tensor) else arr
                   for arr in batch)
         is_new_epoch = train_iter.epoch != epoch
@@ -316,7 +318,7 @@ class CustomConverter(object):
         """
         # batch should be located in list
         assert len(batch) == 1
-        xs, ys, train = batch[0]
+        xs, ys, uttid_list = batch[0]
 
         # perform subsampling
         if self.subsampling_factor > 1:
@@ -345,7 +347,7 @@ class CustomConverter(object):
         ys_pad = pad_list([torch.from_numpy(np.array(y[0][:]) if isinstance(y, tuple) else y).long()
                            for y in ys], self.ignore_id).to(device)
 
-        return xs_pad, ilens, ys_pad, train
+        return xs_pad, ilens, ys_pad, uttid_list
 
 
 class CustomConverterMulEnc(object):
@@ -450,15 +452,14 @@ def train(args):
         model.rnnlm = rnnlm
 
     # write model config
-    if not os.path.exists(args.outdir):
-        os.makedirs(args.outdir)
     model_conf = args.outdir + '/model.json'
-    with open(model_conf, 'wb') as f:
-        logging.info('writing a model config file to ' + model_conf)
-        f.write(json.dumps((idim_list[0] if args.num_encs == 1 else idim_list, odim, vars(args)),
-                           indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
-    for key in sorted(vars(args).keys()):
-        logging.info('ARGS: ' + key + ': ' + str(vars(args)[key]))
+    if args.rank == 0:
+        with open(model_conf, 'wb') as f:
+            logging.info('writing a model config file to ' + model_conf)
+            f.write(json.dumps((idim_list[0] if args.num_encs == 1 else idim_list, odim, vars(args)),
+                               indent=4, ensure_ascii=False, sort_keys=True).encode('utf_8'))
+        for key in sorted(vars(args).keys()):
+            logging.info('ARGS: ' + key + ': ' + str(vars(args)[key]))
 
     reporter = model.reporter
 
@@ -479,6 +480,10 @@ def train(args):
     else:
         dtype = torch.float32
     model = model.to(device=device, dtype=dtype)
+
+    # distributed training
+    model = convert_syncbn_model(model)
+    model = DistributedDataParallel(model)
 
     # Setup an optimizer
     if args.opt == 'adadelta':
@@ -517,13 +522,13 @@ def train(args):
     # Setup a converter
     if args.moe_mode:
         assert args.num_encs == 1, "multi-encoder type is not supported currently."
-        converter = CustomConverterMoE(subsampling_factor=model.subsample[0], dtype=dtype)
+        converter = CustomConverterMoE(subsampling_factor=model.module.subsample[0], dtype=dtype)
         logging.warning("Using CustomConverterMoE")
     else:
         if args.num_encs == 1:
-            converter = CustomConverter(subsampling_factor=model.subsample[0], dtype=dtype)
+            converter = CustomConverter(subsampling_factor=model.module.subsample[0], dtype=dtype)
         else:
-            converter = CustomConverterMulEnc([i[0] for i in model.subsample_list], dtype=dtype)
+            converter = CustomConverterMulEnc([i[0] for i in model.module.subsample_list], dtype=dtype)
 
     # read json data
     with open(args.train_json, 'rb') as f:
@@ -543,7 +548,11 @@ def train(args):
                           batch_frames_out=args.batch_frames_out,
                           batch_frames_inout=args.batch_frames_inout,
                           iaxis=0, oaxis=0,
-                          perturb_sampling=args.perturb_sampling)
+                          perturb_sampling=args.perturb_sampling,
+                          rank=args.rank,
+                          world_size=args.world_size)
+    # note(yzl23): to avoid missing data in dev set(distributed into different workers), all workers compute whole devset
+    # besides, compute all data makes statistics in devset the same over all workers, this property is helpful for lr scheduler
     valid = make_batchset(valid_json, args.batch_size,
                           args.maxlen_in, args.maxlen_out, args.minibatches,
                           min_batch_size=args.ngpu if args.ngpu > 1 else 1,
@@ -555,12 +564,12 @@ def train(args):
                           iaxis=0, oaxis=0)
 
     load_tr = LoadInputsAndTargets(
-        mode='asr', load_output=True, preprocess_conf=None, # args.preprocess_conf,
-        preprocess_args={'train': False}, train=True  # Switch the mode of preprocessing
+        mode='asr', load_output=True, preprocess_conf=args.preprocess_conf,
+        preprocess_args={'train': True}  # Switch the mode of preprocessing
     )
     load_cv = LoadInputsAndTargets(
-        mode='asr', load_output=True, preprocess_conf=None,#args.preprocess_conf,
-        preprocess_args={'train': False}, train=False  # Switch the mode of preprocessing
+        mode='asr', load_output=True, preprocess_conf=args.preprocess_conf,
+        preprocess_args={'train': False}  # Switch the mode of preprocessing
     )
     # hack to make batchsize argument as 1
     # actual bathsize is included in a list
@@ -591,7 +600,6 @@ def train(args):
         trainer.extend(PerturbSamplingEnabler(train_iter, train_json, load_tr, converter, args),
                        trigger=(1, 'epoch'))
 
-
     # Resume from a snapshot
     if args.resume:
         logging.info('resumed from %s' % args.resume)
@@ -605,7 +613,7 @@ def train(args):
         trainer.extend(CustomEvaluator(model, valid_iter, reporter, device, args.ngpu))
 
     # Save attention weight each epoch
-    if args.num_save_attention > 0 and args.mtlalpha != 1.0:
+    if args.rank == 0 and args.num_save_attention > 0 and args.mtlalpha != 1.0:
         data = sorted(list(valid_json.items())[:args.num_save_attention],
                       key=lambda x: int(x[1]['input'][0]['shape'][1]), reverse=True)
         if hasattr(model, "module"):
@@ -629,36 +637,38 @@ def train(args):
             'validation/main/loss_ctc{}'.format(i + 1) for i in range(model.num_encs)]
         report_keys_cer_ctc = ['main/cer_ctc{}'.format(i + 1) for i in range(model.num_encs)] + [
             'validation/main/cer_ctc{}'.format(i + 1) for i in range(model.num_encs)]
-    trainer.extend(extensions.PlotReport(['main/loss', 'validation/main/loss',
-                                          'main/loss_ctc', 'validation/main/loss_ctc',
-                                          'main/loss_att',
-                                          'validation/main/loss_att'] +
-                                         ([] if args.num_encs == 1 else report_keys_loss_ctc),
-                                         'epoch', file_name='loss.png'))
-    trainer.extend(extensions.PlotReport(['main/acc', 'validation/main/acc'],
-                                         'epoch', file_name='acc.png'))
-    trainer.extend(extensions.PlotReport(
-        ['main/cer_ctc', 'validation/main/cer_ctc'] + ([] if args.num_encs == 1 else report_keys_loss_ctc),
-        'epoch', file_name='cer.png'))
+    if args.rank == 0:
+        trainer.extend(extensions.PlotReport(['main/loss', 'validation/main/loss',
+                                              'main/loss_ctc', 'validation/main/loss_ctc',
+                                              'main/loss_att',
+                                              'validation/main/loss_att'] +
+                                             ([] if args.num_encs == 1 else report_keys_loss_ctc),
+                                             'epoch', file_name='loss.png'))
+        trainer.extend(extensions.PlotReport(['main/acc', 'validation/main/acc'],
+                                             'epoch', file_name='acc.png'))
+        trainer.extend(extensions.PlotReport(
+            ['main/cer_ctc', 'validation/main/cer_ctc'] + ([] if args.num_encs == 1 else report_keys_loss_ctc),
+            'epoch', file_name='cer.png'))
 
-    # Save best models
-    trainer.extend(snapshot_object(model, 'model.loss.best'),
-                   trigger=training.triggers.MinValueTrigger('validation/main/loss'))
-    if mtl_mode != 'ctc':
-        trainer.extend(snapshot_object(model, 'model.acc.best'),
-                       trigger=training.triggers.MaxValueTrigger('validation/main/acc'))
+        # Save best models
+        trainer.extend(snapshot_object(model, 'model.loss.best'),
+                       trigger=training.triggers.MinValueTrigger('validation/main/loss'))
+        if mtl_mode != 'ctc':
+            trainer.extend(snapshot_object(model, 'model.acc.best'),
+                           trigger=training.triggers.MaxValueTrigger('validation/main/acc'))
 
-    # save snapshot which contains model and optimizer states
-    if args.save_interval_iters > 0:
-        trainer.extend(torch_snapshot(filename='snapshot.iter.{.updater.iteration}'),
-                       trigger=(args.save_interval_iters, 'iteration'))
-    else:
-        trainer.extend(torch_snapshot(), trigger=(1, 'epoch'))
-        # clean up snapshots that are 'too old'
-        trainer.extend(torch_snapshot_cleanup(args.snapshots_num_keeps), trigger=(1, 'epoch'))
+        # save snapshot which contains model and optimizer states
+        if args.save_interval_iters > 0:
+            trainer.extend(torch_snapshot(filename='snapshot.iter.{.updater.iteration}'),
+                           trigger=(args.save_interval_iters, 'iteration'))
+        else:
+            trainer.extend(torch_snapshot(), trigger=(1, 'epoch'))
+            # clean up snapshots that are 'too old'
+            trainer.extend(torch_snapshot_cleanup(args.snapshots_num_keeps), trigger=(1, 'epoch'))
 
     # epsilon decay in the optimizer
     if args.opt == 'adadelta':
+        raise Exception('adadelta optimizer is not supported in DDP training mode')
         if args.criterion == 'acc' and mtl_mode != 'ctc':
             trainer.extend(restore_snapshot(model, args.outdir + '/model.acc.best', load_fn=torch_load),
                            trigger=CompareValueTrigger(
@@ -677,36 +687,38 @@ def train(args):
                            trigger=CompareValueTrigger(
                                'validation/main/loss',
                                lambda best_value, current_value: best_value < current_value))
+    if args.rank == 0:
+        # Write a log of evaluation statistics for each epoch
+        trainer.extend(extensions.LogReport(trigger=(args.report_interval_iters, 'iteration')))
+        report_keys = ['epoch', 'iteration', 'main/loss', 'main/loss_ctc', 'main/loss_att',  'main/phn_loss',
+                'main/phn_acc',
+                       'validation/main/loss', 'validation/main/loss_ctc', 'validation/main/loss_att',
+                       'validation/main/phn_loss', 'validation/main/phn_acc', 
+                       'main/acc', 'validation/main/acc', 'main/cer_ctc', 'validation/main/cer_ctc',
+                       'elapsed_time'] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
+        if args.opt == 'adadelta':
+            trainer.extend(extensions.observe_value(
+                'eps', lambda trainer: trainer.updater.get_optimizer('main').param_groups[0]["eps"]),
+                trigger=(args.report_interval_iters, 'iteration'))
+            report_keys.append('eps')
+        # lid mtl
+        if args.log_lid_mtl_acc: # yzl23: this is used only in module e2e_asr_transformer_lid:E2E
+            assert 'e2e_asr_transformer_lid:E2E' in args.model_module
+            report_keys.extend(['main/lid_acc', 'validation/main/lid_acc'])
+        if args.report_cer:
+            report_keys.append('validation/main/cer')
+        if args.report_wer:
+            report_keys.append('validation/main/wer')
+        trainer.extend(extensions.PrintReport(
+            report_keys), trigger=(args.report_interval_iters, 'iteration'))
 
-    # Write a log of evaluation statistics for each epoch
-    trainer.extend(extensions.LogReport(trigger=(args.report_interval_iters, 'iteration')))
-    report_keys = ['epoch', 'iteration', 'main/loss', 'main/loss_ctc', 'main/loss_att',
-                   'validation/main/loss', 'validation/main/loss_ctc', 'validation/main/loss_att',
-                   'main/acc', 'validation/main/acc', 'main/cer_ctc', 'validation/main/cer_ctc',
-                   'elapsed_time'] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
-    if args.opt == 'adadelta':
-        trainer.extend(extensions.observe_value(
-            'eps', lambda trainer: trainer.updater.get_optimizer('main').param_groups[0]["eps"]),
-            trigger=(args.report_interval_iters, 'iteration'))
-        report_keys.append('eps')
-    # lid mtl
-    if args.log_lid_mtl_acc: # yzl23: this is used only in module e2e_asr_transformer_lid:E2E
-        assert 'e2e_asr_transformer_lid:E2E' in args.model_module
-        report_keys.extend(['main/lid_acc', 'validation/main/lid_acc'])
-    if args.report_cer:
-        report_keys.append('validation/main/cer')
-    if args.report_wer:
-        report_keys.append('validation/main/wer')
-    trainer.extend(extensions.PrintReport(
-        report_keys), trigger=(args.report_interval_iters, 'iteration'))
-
-    trainer.extend(extensions.ProgressBar(update_interval=args.report_interval_iters))
-    set_early_stop(trainer, args)
-
-    if args.tensorboard_dir is not None and args.tensorboard_dir != "":
-        trainer.extend(TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
-                       trigger=(args.report_interval_iters, "iteration"))
+        trainer.extend(extensions.ProgressBar(update_interval=args.report_interval_iters))
+        
+        if args.tensorboard_dir is not None and args.tensorboard_dir != "":
+            trainer.extend(TensorboardLogger(SummaryWriter(args.tensorboard_dir), att_reporter),
+                           trigger=(args.report_interval_iters, "iteration"))
     # Run the training
+    set_early_stop(trainer, args)
     trainer.run()
     check_early_stop(trainer, args.epochs)
 
@@ -721,6 +733,7 @@ def recog(args):
     model, train_args = load_trained_model(args.model)
     assert isinstance(model, ASRInterface)
     model.recog_args = args
+
     # read rnnlm
     if args.rnnlm:
         rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
@@ -764,6 +777,7 @@ def recog(args):
     with open(args.recog_json, 'rb') as f:
         js = json.load(f)['utts']
     new_js = {}
+
     if args.store_penultimate_state:
         load_inputs_and_targets = LoadInputsAndTargets(
             mode='asr', load_output=True, sort_in_input_length=False,
@@ -804,12 +818,10 @@ def recog(args):
                     continue
                 else:
                     feat = load_inputs_and_targets(batch)
-                    # print(feat, 'feats peek 1')
                     if train_args.moe_mode:
                         feat = [feat[0][0], feat[1][0]] # since there is only only one-single utterance
                     else:
-                        feat = [feat[0][0], feat[1]] if args.num_encs == 1 else [feat[idx][0] for idx in range(model.num_encs)]
-                        # print(feat, 'feats peek 2')
+                        feat = feat[0][0] if args.num_encs == 1 else [feat[idx][0] for idx in range(model.num_encs)]
                 if args.streaming_mode == 'window' and args.num_encs == 1:
                     logging.info('Using streaming recognizer with window size %d frames', args.streaming_window)
                     se2e = WindowStreamingE2E(e2e=model, recog_args=args, rnnlm=rnnlm)
