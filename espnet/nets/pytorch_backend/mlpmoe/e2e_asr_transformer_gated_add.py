@@ -125,9 +125,9 @@ class E2E(ASRInterface, torch.nn.Module):
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
         # gated add module 
-        self.aggregation_module = torch.nn.ModuleList([
+        self.aggregation_module = torch.nn.Sequential(
             torch.nn.Linear(2*args.adim, 1),
-            torch.nn.Sigmoid()])
+            torch.nn.Sigmoid())
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
