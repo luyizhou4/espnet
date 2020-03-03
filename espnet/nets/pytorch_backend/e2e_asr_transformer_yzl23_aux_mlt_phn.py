@@ -274,7 +274,7 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x[0] = torch.as_tensor(x[0]).unsqueeze(0) # (B, T, D) with #B=1
-        enc_output, _ = self.encoder(x[0], None, x[1])
+        enc_output, _, _, _ = self.encoder(x[0], None, x[1])
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
