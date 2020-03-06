@@ -43,9 +43,13 @@ accum_grad=1
 n_iter_processes=2
 mtlalpha=0.2
 
+suffix=$1
+
 preprocess_config=conf/specaug.yaml 
-train_config=conf/train_alldata_aux.yaml
+train_config=conf/train_alldata_aux_${suffix}.yaml
 decode_config=conf/decode.yaml
+
+echo train_conf=$train_config
 
 # decoding parameter
 recog_model=model.acc.best # set a model to be used for decoding: 'model.acc.best' or 'model.loss.best'
@@ -62,7 +66,7 @@ set -o pipefail
 train_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/mix200/data.json
 valid_json=/mnt/lustre/sjtu/users/yzl23/work_dir/asr/is20_codeswitching/espnet/egs/codeswitching/asr/data/json_data/dev_mix20/data.json
 
-tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_mix200_aux
+tag=ddp_all_data/lib_percentage/AS2S_base_jca${mtlalpha}_ddp${world_size}_mix200_aux_${suffix}
 expdir=exp/${tag}
 mkdir -p ${expdir}
 
@@ -121,7 +125,7 @@ if [ $rank -eq 0 ]; then
             #### use CPU for decoding
             ngpu=0
 
-            slurm.pl JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            slurm.pl --num-threads 4 JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
                 asr_recog3.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
@@ -182,7 +186,7 @@ if [ $rank -eq 0 ]; then
             #### use CPU for decoding
             ngpu=0
 
-            slurm.pl JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            slurm.pl --num-threads 4 JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
                 asr_recog3.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \

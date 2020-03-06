@@ -118,7 +118,8 @@ class Encoder(torch.nn.Module):
                  positionwise_layer_type="linear",
                  positionwise_conv_kernel_size=1,
                  padding_idx=-1,
-                 aux_pos=None):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
+                 aux_pos=None,
+                 aux_only=False):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
 
@@ -165,12 +166,17 @@ class Encoder(torch.nn.Module):
         # auxilary model relevant begin
         # only when aux_model_path is not None, the three attribute below is meaningful
         self.aux_pos = None
-        print('aux_pos=', aux_pos, flush=True)
+        print('aux_pos=', aux_pos, 'aux_only=', aux_only, flush=True)
 
         self.aux_model = AuxModel()
         self.aux_model.eval()
         self.aux_pos = aux_pos
-        self.aux_linear = torch.nn.Linear(attention_dim+self.aux_model.dim, attention_dim)
+        self.aux_only = aux_only
+        if aux_only:
+            assert self.aux_pos is not None, "aux_only is True, but aux_pos is None"
+            self.aux_linear = torch.nn.Linear(self.aux_model.dim, attention_dim)
+        else:
+            self.aux_linear = torch.nn.Linear(attention_dim+self.aux_model.dim, attention_dim)
 
         self.encoders = repeat(
             num_blocks,
@@ -210,7 +216,10 @@ class Encoder(torch.nn.Module):
         #print('aus_pos', self.aux_pos, flush=True)
         if self.aux_pos == "COVOUT":
             # print('xs', xs.size(), '1', flush=True)
-            xs = torch.cat((xs, aux_emb), dim=2)
+            if self.aux_only:
+                xs = aux_emb
+            else:
+                xs = torch.cat((xs, aux_emb), dim=2)
             # print('xs', xs.size(), '2', flush=True)
             xs = self.aux_linear(xs) # (b, t, n_att+bn) -> (b,t,n_att)
             # print('xs', xs.size(), '3', flush=True)
@@ -221,7 +230,10 @@ class Encoder(torch.nn.Module):
         # print('xs', xs.size(),  'masks', masks.size(), '02')#, 'aux_masks', aux_masks.size(), '02', flush=True)
         if self.aux_pos == "ENOUT":
             # print('xs', xs.size(), '1')
-            xs = torch.cat((xs, aux_emb), dim=2)
+            if self.aux_only:
+                xs = aux_emb
+            else:
+                xs = torch.cat((xs, aux_emb), dim=2)
             # print('xs', xs.size(), '2')
             xs = self.aux_linear(xs) # (b, t, n_att+bn) -> (b,t,n_att)
             # print('xs', xs.size(), '3')

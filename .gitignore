@@ -59,6 +59,3 @@ tools/PESQ*
 tools/hts_engine_API*
 tools/open_jtalk*
 tools/pyopenjtalk*
-
-# workding dirs
-# espnet/nets/pytorch_backend/hanmoe/*

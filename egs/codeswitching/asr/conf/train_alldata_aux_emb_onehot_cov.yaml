@@ -1,0 +1,48 @@
+# this config is used for all data trainging(cn500+lib960+mix200), 8gpu 12G memory
+# similar to egs/librispeech/config/train.yaml
+# adim, aheads, transformer-lr, mtlalpha keeps the same as swbd config
+# batch-size --> batch-bins, accum-grad=1 
+
+# network architecture
+# encoder related
+elayers: 12
+eunits: 2048
+# decoder related
+dlayers: 6
+dunits: 2048
+# attention related
+adim: 256
+aheads: 4
+
+# hybrid CTC/attention
+mtlalpha: 0.2
+
+# label smoothing
+lsm-weight: 0.1
+
+# minibatch related
+batch-bins: 6000000
+
+# optimization related
+sortagrad: 0 # Feed samples from shortest to longest ; -1: enabled for all epochs, 0: disabled, other: enabled for 'other' epochs
+opt: noam
+accum-grad: 1
+grad-clip: 5
+patience: 0
+epochs: 100
+dropout-rate: 0.1
+
+# transformer specific setting
+backend: pytorch
+model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E"
+transformer-input-layer: conv2d     # encoder architecture type
+transformer-lr: 5.0
+transformer-warmup-steps: 25000
+transformer-attn-dropout-rate: 0.0
+transformer-length-normalized-loss: false
+transformer-init: pytorch
+
+# auxiliary model setting
+aux-model-path: "/mnt/lustre/sjtu/users/mkh96/wordspace/asr/codeswitch/exp/phone_classifier/transformer_layer12_lsm0.0_ep100/results/snapshot.ep.100"
+aux-has-linear: "True"
+aux-pos: "COVOUT"

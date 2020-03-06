@@ -49,7 +49,7 @@ from espnet.utils.dataset import ChainerDataLoader
 from espnet.utils.dataset import TransformDataset
 from espnet.utils.deterministic_utils import set_deterministic_pytorch
 from espnet.utils.dynamic_import import dynamic_import
-from espnet.utils.io_utils3 import LoadInputsAndTargets
+from espnet.utils.io_utils2 import LoadInputsAndTargets
 from espnet.utils.training.batchfy import make_batchset
 from espnet.utils.training.evaluator import BaseEvaluator
 from espnet.utils.training.iterators import ShufflingEnabler, PerturbSamplingEnabler
@@ -112,7 +112,7 @@ class CustomEvaluator(BaseEvaluator):
         self.model.eval()
         with torch.no_grad():
             for batch in it:
-                x = tuple(arr.to(self.device) if isinstance(arr, torch.Tensor)  else arr
+                x = tuple(arr.to(self.device) if arr is not None else None
                           for arr in batch)
                 observation = {}
                 with reporter_module.report_scope(observation):
@@ -316,7 +316,7 @@ class CustomConverter(object):
         """
         # batch should be located in list
         assert len(batch) == 1
-        xs, ys, train = batch[0]
+        xs, ys, uttid_list = batch[0]
 
         # perform subsampling
         if self.subsampling_factor > 1:
@@ -345,7 +345,7 @@ class CustomConverter(object):
         ys_pad = pad_list([torch.from_numpy(np.array(y[0][:]) if isinstance(y, tuple) else y).long()
                            for y in ys], self.ignore_id).to(device)
 
-        return xs_pad, ilens, ys_pad, train
+        return xs_pad, ilens, ys_pad, uttid_list
 
 
 class CustomConverterMulEnc(object):
@@ -555,12 +555,12 @@ def train(args):
                           iaxis=0, oaxis=0)
 
     load_tr = LoadInputsAndTargets(
-        mode='asr', load_output=True, preprocess_conf=None, # args.preprocess_conf,
-        preprocess_args={'train': False}, train=True  # Switch the mode of preprocessing
+        mode='asr', load_output=True, preprocess_conf=args.preprocess_conf,
+        preprocess_args={'train': True}  # Switch the mode of preprocessing
     )
     load_cv = LoadInputsAndTargets(
-        mode='asr', load_output=True, preprocess_conf=None,#args.preprocess_conf,
-        preprocess_args={'train': False}, train=False  # Switch the mode of preprocessing
+        mode='asr', load_output=True, preprocess_conf=args.preprocess_conf,
+        preprocess_args={'train': False}  # Switch the mode of preprocessing
     )
     # hack to make batchsize argument as 1
     # actual bathsize is included in a list
@@ -680,8 +680,9 @@ def train(args):
 
     # Write a log of evaluation statistics for each epoch
     trainer.extend(extensions.LogReport(trigger=(args.report_interval_iters, 'iteration')))
-    report_keys = ['epoch', 'iteration', 'main/loss', 'main/loss_ctc', 'main/loss_att',
+    report_keys = ['epoch', 'iteration', 'main/loss', 'main/loss_ctc', 'main/loss_att', 'main/phn_loss', 'main/phn_acc',
                    'validation/main/loss', 'validation/main/loss_ctc', 'validation/main/loss_att',
+                   'validation/main/phn_loss', 'validation/main/phn_acc',
                    'main/acc', 'validation/main/acc', 'main/cer_ctc', 'validation/main/cer_ctc',
                    'elapsed_time'] + ([] if args.num_encs == 1 else report_keys_cer_ctc + report_keys_loss_ctc)
     if args.opt == 'adadelta':
@@ -721,6 +722,7 @@ def recog(args):
     model, train_args = load_trained_model(args.model)
     assert isinstance(model, ASRInterface)
     model.recog_args = args
+
     # read rnnlm
     if args.rnnlm:
         rnnlm_args = get_model_conf(args.rnnlm, args.rnnlm_conf)
@@ -764,6 +766,7 @@ def recog(args):
     with open(args.recog_json, 'rb') as f:
         js = json.load(f)['utts']
     new_js = {}
+
     if args.store_penultimate_state:
         load_inputs_and_targets = LoadInputsAndTargets(
             mode='asr', load_output=True, sort_in_input_length=False,

@@ -21,38 +21,56 @@ from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsamplin
 # auxiliary model relevant
 #from espnet.nets.pytorch_backend.e2e_lid_transformer import E2E as aux_model
 from espnet.asr.pytorch_backend.asr_init import load_trained_model
-from espnet.transform.transformation import Transformation
+import numpy as np
 
 
-class AuxModel(torch.nn.Module):
-    """Auxiliary Model is built by load trained model and a optional linear Module
-    :param string aux_model_path: the path for trained auxiliary model
-    :param int aux_n_bn: only when has_linear is True, is meaningful. Used to set the output dim of linear layer 
-    :param has_linear: default is False
-    :return torch.nn.Module aux_model
+class AuxModel(object):
+    """Auxiliary Model load phone ali to build auxliary onehot embedings, which act as oracle ali.   
     """
-    def __init__(self, aux_model_path,  has_linear=False):
+    def __init__(self):
         super(AuxModel, self).__init__()
-        aux_trained_model, aux_trained_args = load_trained_model(aux_model_path)
-        self.aux_model = aux_trained_model
-        #print('aux_model', self.aux_model)
-        self.odim = aux_trained_args.adim
-        self.has_linear = has_linear
-        if has_linear:
-            self.odim = 128
-    def forward(self, xs, masks):
-        emb, masks = self.aux_model.encoder(xs, masks)
-        if self.has_linear:
-            emb = self.aux_model.lid_lo(emb)
-            for i in range(len(emb)): # iterate on batch
-                    maxi = emb[i].argmax(1)
-                    onehot = torch.zeros(emb[i].size(0), self.odim)
-                    onehot[torch.arange(emb[i].size(0)), maxi] = 1
-                    emb[i] = onehot
-        return emb, masks
+        self.load_ali()
+        self.load_phntab()
+
+    def __call__(self, uttid_list, maxlen, device, covsample=True, ignore_index=-1): # uttid_list (b,), masks (b,c,l)
+        if covsample:
+            maxlen = int( ( int( (maxlen - 1 ) / 2 ) - 1 ) / 2 )
+        return_batch = [[ignore_index] * maxlen] * len(uttid_list) # (b, maxlen)
+        return_batch = np.array(return_batch)
+        for i in range(len(uttid_list)):
+            uttid = uttid_list[i]
+            if uttid in self.uttid2ali:
+                ali = self.uttid2ali[uttid]
+                if covsample:
+                    ali = ali[:-2:2][:-2:2]
+                for j in range(len(ali)):
+                    return_batch[i][j] = int(self.ptab[ali[j]])
+            else: # missing = True
+                logging.warning('utt {} is missing in phone ali'.format(uttid))
+        
+        return torch.Tensor(return_batch).long().to(device) # (b, maxlen) 
 
 
+    def load_ali(self):
+        alif = '/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/data/phone/ali.txt'
+        uttid2ali = {}
+        with open(alif, 'r') as fin:
+            for line in fin:
+                uid, ali = line.split()[0], line.split()[1:]
+                uttid2ali[uid] = ali
+        self.uttid2ali = uttid2ali
 
+    def load_phntab(self):
+        phonetab = '/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/data/phone/phones.txt'
+        ptab = {}
+        dim = 0
+        with open(phonetab, 'r') as phnin:
+            for line in phnin:
+                phn, pid = line.split()[0], line.split()[1]
+                ptab[phn] = int(pid)
+                dim += 1
+        self.ptab = ptab
+        self.dim = dim
 
 
 class Encoder(torch.nn.Module):
@@ -62,7 +80,7 @@ class Encoder(torch.nn.Module):
     :param int attention_dim: dimention of attention
     :param int attention_heads: the number of heads of multi head attention
     :param int linear_units: the number of units of position-wise feed forward
-    :par=Noneam int num_blocks: the number of decoder blocks
+    :param int num_blocks: the number of decoder blocks
     :param float dropout_rate: dropout rate
     :param float attention_dropout_rate: dropout rate in attention
     :param float positional_dropout_rate: dropout rate after adding positional encoding
@@ -92,11 +110,8 @@ class Encoder(torch.nn.Module):
                  positionwise_layer_type="linear",
                  positionwise_conv_kernel_size=1,
                  padding_idx=-1,
-                 aux_model_path=None,
-                 aux_has_linear=False,
-                 aux_n_bn=None,
-                 aux_pos=None,
-                 preprocess_conf=None):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
+                 phn_head_layer=0,
+                 phn_ignore_idx=-1):  # aux_pos including: FB(FBank), COVOUT(Cov_out), ENOUT(Encoder_out)
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
 
@@ -142,22 +157,26 @@ class Encoder(torch.nn.Module):
 
         # auxilary model relevant begin
         # only when aux_model_path is not None, the three attribute below is meaningful
-        self.aux_model = None
-        self.aux_pos = aux_pos
-        print('aux_model_path=', aux_model_path,
-              'aux_has_linear=', aux_has_linear,
-          'aux_n_bn=', aux_n_bn,
-          'aux_pos=', aux_pos, flush=True)
 
-        if aux_model_path is not None:
-            self.aux_model = AuxModel(aux_model_path, has_linear=aux_has_linear)
-            self.aux_model.eval()
-            aux_n_bn = self.aux_model.odim
-            self.aux_pos = aux_pos
-            self.aux_linear = torch.nn.Linear(attention_dim+aux_n_bn, attention_dim)
+        self.aux_model = AuxModel()
+        
+        self.phn_linear = torch.nn.Linear(attention_dim,128)
+        self.phn_ignore_idx = phn_ignore_idx
 
-        self.encoders = repeat(
-            num_blocks,
+        self.encoders1 = repeat(
+            phn_head_layer,
+            lambda: EncoderLayer(
+                attention_dim,
+                MultiHeadedAttention(attention_heads, attention_dim, attention_dropout_rate),
+                positionwise_layer(*positionwise_layer_args),
+                dropout_rate,
+                normalize_before,
+                concat_after
+            )
+        )
+
+        self.encoders2 = repeat(
+            num_blocks - phn_head_layer,
             lambda: EncoderLayer(
                 attention_dim,
                 MultiHeadedAttention(attention_heads, attention_dim, attention_dropout_rate),
@@ -169,74 +188,33 @@ class Encoder(torch.nn.Module):
         )
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
-        print('preprocess_conf: ', preprocess_conf) 
-        self.preprocessing = Transformation(preprocess_conf)            
 
-    def forward(self, xs, masks, train):
+    def forward(self, xs, masks, uttid_list):
         """Embed positions in tensor.
            :param torch.Tensor xs: input tensor
            :param torch.Tensor masks: input mask
            :return: position embedded tensor and mask
            :rtype Tuple[torch.Tensor, torch.Tensor]:
         """
-
         # xs (b, t, f) 
-        if self.aux_model is not None:
-            with torch.no_grad():
-                aux_emb, aux_masks = self.aux_model(xs, masks) # (b, t, bn)
-
-        #print('aux_emb', aux_emb, aux_emb.size())
-
-
-        # The transformation is procceed in numpy 
-        # Dump tensor to numpy and load it back to xs
-        device = xs.device
-        xs_numpy = xs.data.cpu().numpy()
-        
-        for i in range(len(xs_numpy)): # iterate on batch
-            xs_numpy[i] = self.preprocessing(xs_numpy[i], None, **{'train': train})
-
-        xs = torch.Tensor(xs_numpy).to(device)
-
         if isinstance(self.embed, Conv2dSubsampling):
+            phn_label = self.aux_model(uttid_list, xs.shape[1], xs.device, True, self.phn_ignore_idx) # (b, t, bn)
             xs, masks = self.embed(xs, masks)
         else:
+            phn_label = self.aux_model(uttid_list, xs.shape[1], xs.device, False, self.phn_ignore_idx) # (b, t, bn)
             xs = self.embed(xs)
 
-        # print('xs', xs.size(), 'masks', masks.size(), 'aux_masks', aux_masks.size(), '00', flush=True)
-        # print('aus_pos', self.aux_pos, flush=True)
-        if self.aux_pos == "COVOUT":
-            # print('xs', xs.size(), '1', flush=True)
-            xs = torch.cat((xs, aux_emb), dim=2)
-            # print('xs', xs.size(), '2', flush=True)
-            xs = self.aux_linear(xs) # (b, t, n_att+bn) -> (b,t,n_att)
-            # print('xs', xs.size(), '3', flush=True)
 
-        # print('xs', xs.size(), 'masks', masks.size(), 'aux_masks', aux_masks.size(), '01', flush=True)
-        xs, masks = self.encoders(xs, masks)
 
-        # print('xs', xs.size(), 'masks', masks.size(), 'aux_masks', aux_masks.size(), '02', flush=True)
-        
-        #print('xs', xs, flush=True)
-        #print('aux', aux_emb, aux_emb.size(), flush=True)
-        #aux_list=[]
-        #for i in range(len(aux_emb[0])):
-        #    for j in range(len(aux_emb[0][i])):
-        #        if aux_emb[0][i][j] == 1.0:
-        #            aux_list.append(j)
+        phn_head, masks = self.encoders1(xs, masks)
+        #print(xs.size(), 'xs.size()', phn_head.size(), 'phn_head.size()')
+        xs, maske = self.encoders2(phn_head, masks)
+        phn_out = self.phn_linear(phn_head)
 
-        #print('aux_list', aux_list,flush=True)
-
-        if self.aux_pos == "ENOUT":
-            # print('xs', xs.size(), '1')
-            xs = torch.cat((xs, aux_emb), dim=2)
-            # print('xs', xs.size(), '2')
-            xs = self.aux_linear(xs) # (b, t, n_att+bn) -> (b,t,n_att)
-            # print('xs', xs.size(), '3')
 
         if self.normalize_before:
             xs = self.after_norm(xs)
-        return xs, masks
+        return xs, masks, phn_out, phn_label # (b, t, d), (b, t) , (b, t, 128), (b,t)
 
 
 # test class
@@ -248,7 +226,7 @@ if __name__ == '__main__':
     import numpy as np
     np.random.seed(0)
 
-    aux_model_path = '/mnt/lustre/sjtu/users/mkh96/wordspace/asr/codeswitch/exp/phone_classifier/transformer_layer12_lsm0.0_ep100/results/snapshot.ep.100'
+    #aux_model_path = '/mnt/lustre/sjtu/users/mkh96/wordspace/asr/codeswitch/exp/phone_classifier/transformer_layer12_lsm0.0_ep100/results/snapshot.ep.100'
     encoder = Encoder(
         idim=80,
         attention_dim=4,
@@ -259,15 +237,13 @@ if __name__ == '__main__':
         dropout_rate=0,
         positional_dropout_rate=0,
         attention_dropout_rate=0,
-        aux_model_path=aux_model_path,
-    aux_has_linear=False,
-        aux_n_bn=100,
-        aux_pos="ENOUT",
-        preprocess_conf='/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/conf/specaug.yaml')  # aux_pos including:COVOUT(Cov_out), ENOUT(Encoder_out)
+        aux_pos="COVOUT")  # aux_pos including:COVOUT(Cov_out), ENOUT(Encoder_out)
 
-    itensor = torch.randn(1, 100, 80)
+    itensor = torch.randn(2, 400, 80)
+    uttid_list = ['cn500h1_T0055G0002S0001', 'cn500h1_T0055G0002S0002' ]
     #print('input tensor', itensor)
-    masks = None #torch.ones(1, 10)
+    masks = torch.ones(2, 1, 400)
+    masks[1][0][200:] = 0 # (b, c, l)
     #print('masks', masks)
-    otensor, masks = encoder(itensor, masks, False)
+    otensor, masks = encoder(itensor, masks, uttid_list)
     print('output tensor', otensor, masks, otensor.size())

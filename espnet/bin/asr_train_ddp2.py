@@ -295,6 +295,8 @@ def get_parser(parser=None, required=True):
                         help='only when aux-has-linear is True, aux_n_bn is meaningful. The dim of aux model bottleneck after linear')
     parser.add_argument('--aux-pos', default=None, type=str,
 		        help='position where auxiliry bottleneck concatenate: COVOUT, ENOUT')
+    parser.add_argument('--aux-only', default=False, type=strtobool,
+		    help='use aux emb as feature')
     return parser
 
 

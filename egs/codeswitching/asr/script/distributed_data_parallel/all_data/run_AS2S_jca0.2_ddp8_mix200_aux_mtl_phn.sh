@@ -7,7 +7,7 @@
 #SBATCH -o logs/ddp.%j
 #SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071
 #SBATCH --mem=50G
-####SBATCH --array=1-8
+#####SBATCH --array=1-8
 
 # Copyright 2017 Johns Hopkins University (Shinji Watanabe)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
@@ -77,7 +77,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         cp ${train_config} ${expdir}/
     fi
     ${cuda_cmd} --gpu ${ngpu} ${expdir}/train.log \
-        asr_train_ddp2.py \
+        asr_train_ddp_aux_mlt_phn.py \
         --rank ${rank} \
         --world-size ${world_size} \
         --config ${train_config} \
@@ -94,7 +94,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         --report-interval-iters ${log} \
         --n-iter-processes ${n_iter_processes} \
         --mtlalpha ${mtlalpha} \
-        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux2:E2E" \
+        --model-module "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux_mlt_phn:E2E" \
         --train-json ${train_json} \
         --valid-json ${valid_json}
 fi
@@ -121,9 +121,8 @@ if [ $rank -eq 0 ]; then
             # splitjson.py --parts ${nj} ${dev_root}/data.json
 
             #### use CPU for decoding
-            ngpu=0 
-            ###  --num-threads 4
-            slurm.pl  --num-threads 6  JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            ngpu=0
+            slurm.pl --num-threads 6 JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
                 asr_recog2.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
@@ -182,9 +181,8 @@ if [ $rank -eq 0 ]; then
             # splitjson.py --parts ${nj} ${dev_root}/data.json
 
             #### use CPU for decoding
-            ngpu=0 
-            #### 
-            slurm.pl --num-threads 6  JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
+            ngpu=0
+            slurm.pl --num-threads 6 JOB=1:${nj} ${expdir}/${decode_dir}/log/decode.JOB.log \
                 asr_recog2.py \
                 --config ${decode_config} \
                 --ngpu ${ngpu} \
