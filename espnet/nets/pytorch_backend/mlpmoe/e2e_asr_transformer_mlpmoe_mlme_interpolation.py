@@ -84,6 +84,10 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained cn jca model')
         group.add_argument('--pretrained-mlme-model', default='', type=str,
                          help='pretrained mlme model')
+        
+        # interpolation coefficient to moe_coe
+        group.add_argument('--interpolation-coe', default=0.0, type=float,
+                           help='interpolation coefficient for moe_coe')
         return parser
 
     @property
@@ -162,6 +166,8 @@ class E2E(ASRInterface, torch.nn.Module):
         self.rnnlm = None
 
         # yzl23 config
+        self.interp_factor = args.interpolation_coe
+        logging.warning("Interpolated moe_coes with {}".format(self.interp_factor))
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
         logging.warning("Model total size: {}M, requires_grad size: {}M"
@@ -256,6 +262,10 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         # 1. forward encoder
         moe_coes = moe_coes[:, :max(moe_coe_lens)] # for data parallel
+        # here we use interpolation_coe to 'fix' initial moe_coes
+        interp_factor = self.interp_factor  # 0.1 for example, similar to lsm
+        moe_coes = (1-interp_factor) * moe_coes + interp_factor / moe_coes.shape[2] 
+
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
         
