@@ -352,8 +352,15 @@ class E2E(ASRInterface, torch.nn.Module):
         coe = self.aggregation_linear(hs_pad) # (B,T,2)
         coe = F.softmax(self.aggre_scaling * coe, dim=-1).unsqueeze(-1) # (B,T,2,1)
         hs_pad = coe[:,:,0] * cn_hs_pad + coe[:,:,1] * en_hs_pad
-        penultimate_state = coe
-        # self.hs_pad = hs_pad
+        
+        # soft assign mode
+        # penultimate_state = 1 - coe # for mlme usage, we need to inverse this coe
+        
+        # hard assign mode
+        penultimate_state = 1 - coe
+        penultimate_state = penultimate_state.squeeze(0).detach().cpu().numpy()
+        # (T, 2) ndnarray, choose argmax position
+        penultimate_state = (penultimate_state > 0.5).astype(int)
 
         # forward decoder
         # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
@@ -361,7 +368,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
 
         # plot penultimate_state, (B,T,att_dim)
-        return penultimate_state.squeeze(0).detach().cpu().numpy()
+        return penultimate_state
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.
