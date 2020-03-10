@@ -10,6 +10,7 @@ import logging
 import math
 
 import torch
+import torch.nn.functional as F
 
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.pytorch_backend.ctc import CTC
@@ -85,6 +86,10 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained en ctc model')
         group.add_argument('--pretrained-mlme-model', default='', type=str,
                          help='pretrained multi-lingual multi-encoder model')
+        # gated add scaling factor
+        group.add_argument('--scaling-factor', default=1.0, type=float,
+                           help='gated add scaling factor')
+
         return parser
 
     @property
@@ -125,9 +130,9 @@ class E2E(ASRInterface, torch.nn.Module):
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
         # gated add module 
-        self.aggregation_module = torch.nn.Sequential(
-            torch.nn.Linear(2*args.adim, 1),
-            torch.nn.Sigmoid())
+        self.aggregation_linear = torch.nn.Linear(2*args.adim, 2) # 2 encoder
+        self.aggre_scaling = args.scaling_factor
+
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -251,8 +256,9 @@ class E2E(ASRInterface, torch.nn.Module):
             xs = lambda * cn_xs + (1-lambda) * en_xs 
         """
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
-        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
+        coe = self.aggregation_linear(hs_pad) # (B,T,2)
+        coe = F.softmax(self.aggre_scaling * coe, dim=-1).unsqueeze(-1) # (B,T,2,1)
+        hs_pad = coe[:,:,0] * cn_hs_pad + coe[:,:,1] * en_hs_pad
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -324,10 +330,9 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
-        enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
-        # enc_output = (1 - lambda_) * cn_enc_output + lambda_ * en_enc_output
-
+        coe = self.aggregation_linear(enc_output) # (B,T,2)
+        coe = F.softmax(self.aggre_scaling * coe, dim=-1).unsqueeze(-1) # (B,T,2,1)
+        enc_output = coe[:,:,0] * cn_enc_output + coe[:,:,1] * en_enc_output
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -344,10 +349,18 @@ class E2E(ASRInterface, torch.nn.Module):
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
 
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
-        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
-        penultimate_state = lambda_
-        # self.hs_pad = hs_pad
+        coe = self.aggregation_linear(hs_pad) # (B,T,2)
+        coe = F.softmax(self.aggre_scaling * coe, dim=-1).unsqueeze(-1) # (B,T,2,1)
+        hs_pad = coe[:,:,0] * cn_hs_pad + coe[:,:,1] * en_hs_pad
+        
+        # soft assign mode
+        # penultimate_state = 1 - coe # for mlme usage, we need to inverse this coe
+        
+        # hard assign mode
+        penultimate_state = 1 - coe
+        penultimate_state = penultimate_state.squeeze(0).detach().cpu().numpy()
+        # (T, 2) ndnarray, choose argmax position
+        penultimate_state = (penultimate_state > 0.5).astype(int)
 
         # forward decoder
         # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
@@ -355,7 +368,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
 
         # plot penultimate_state, (B,T,att_dim)
-        return penultimate_state.squeeze(0).detach().cpu().numpy()
+        return penultimate_state
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.

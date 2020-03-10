@@ -85,6 +85,9 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained en ctc model')
         group.add_argument('--pretrained-mlme-model', default='', type=str,
                          help='pretrained multi-lingual multi-encoder model')
+        group.add_argument('--enc-lambda', default=0.5, type=float,
+                           help='encoder fusion lambda params')
+
         return parser
 
     @property
@@ -124,10 +127,6 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
-        # gated add module 
-        self.aggregation_module = torch.nn.Sequential(
-            torch.nn.Linear(2*args.adim, 1),
-            torch.nn.Sigmoid())
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -169,7 +168,8 @@ class E2E(ASRInterface, torch.nn.Module):
         # yzl23 config
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
-
+        self.enc_lambda = args.enc_lambda
+        logging.warning("Using fixed encoder lambda: {}".format(self.enc_lambda))
         logging.warning("Model total size: {}M, requires_grad size: {}M"
                 .format(self.count_parameters(), self.count_parameters(requires_grad=True)))
 
@@ -251,7 +251,7 @@ class E2E(ASRInterface, torch.nn.Module):
             xs = lambda * cn_xs + (1-lambda) * en_xs 
         """
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        lambda_ = self.enc_lambda 
         hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         self.hs_pad = hs_pad
 
@@ -324,10 +324,8 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
+        lambda_ = self.enc_lambda
         enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
-        # enc_output = (1 - lambda_) * cn_enc_output + lambda_ * en_enc_output
-
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -344,7 +342,7 @@ class E2E(ASRInterface, torch.nn.Module):
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
 
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        lambda_ = self.enc_lambda
         hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         penultimate_state = lambda_
         # self.hs_pad = hs_pad
