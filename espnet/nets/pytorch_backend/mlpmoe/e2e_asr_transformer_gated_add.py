@@ -326,8 +326,12 @@ class E2E(ASRInterface, torch.nn.Module):
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
         lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
         enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
+        
+        # inverse lambda decode 
+        # first round lambda_ params to 0/1
+        # lambda_ = lambda_.round()
         # enc_output = (1 - lambda_) * cn_enc_output + lambda_ * en_enc_output
-
+        
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):

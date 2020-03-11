@@ -340,11 +340,12 @@ class E2E(ASRInterface, torch.nn.Module):
         # multi-encoder forward
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        # hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
 
-        lambda_ = self.enc_lambda
-        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
-        penultimate_state = lambda_
+        # lambda_ = self.enc_lambda
+        # hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
+        # penultimate_state = lambda_
+        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
         # self.hs_pad = hs_pad
 
         # forward decoder
