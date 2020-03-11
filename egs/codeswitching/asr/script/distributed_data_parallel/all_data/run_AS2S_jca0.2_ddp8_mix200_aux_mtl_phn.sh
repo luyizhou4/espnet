@@ -7,7 +7,7 @@
 #SBATCH -o logs/ddp.%j
 #SBATCH -x gqxx-01-075,gqxx-01-014,gqxx-01-121,gqxx-01-122,gqxx-01-003,gqxx-01-072,gqxx-01-071
 #SBATCH --mem=50G
-#####SBATCH --array=1-8
+#SBATCH --array=1-8
 
 # Copyright 2017 Johns Hopkins University (Shinji Watanabe)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
@@ -22,14 +22,14 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 # ddp related
 rank=$((SLURM_ARRAY_TASK_ID-1))
 world_size=$SLURM_ARRAY_TASK_COUNT
-rank=0
-world_size=8
+#rank=0
+#world_size=8
 
 echo "world_size="$SLURM_ARRAY_TASK_COUNT
 
 # general configuration
 backend=pytorch
-stage=4        # start from 0 if you need to start from data preparation
+stage=3        # start from 0 if you need to start from data preparation
 stop_stage=10
 ngpu=1         # number of gpus ("0" uses cpu, otherwise use gpu)
 debugmode=1

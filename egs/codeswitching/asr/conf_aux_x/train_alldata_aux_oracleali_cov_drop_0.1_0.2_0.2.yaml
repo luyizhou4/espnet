@@ -34,7 +34,7 @@ dropout-rate: 0.1
 
 # transformer specific setting
 backend: pytorch
-model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E"
+model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux_ali:E2E"
 transformer-input-layer: conv2d     # encoder architecture type
 transformer-lr: 5.0
 transformer-warmup-steps: 25000
@@ -43,4 +43,6 @@ transformer-length-normalized-loss: false
 transformer-init: pytorch
 
 # auxiliary model setting
-aux-pos: "ENOUT"
+ali-file: "/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/data/phone/rep/oracle_mix200_dev_eval_drop_0.1_0.2_0.2.init"
+aux-pos: "COVOUT"
+aux-only: "False"

@@ -34,7 +34,7 @@ dropout-rate: 0.1
 
 # transformer specific setting
 backend: pytorch
-model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux:E2E"
+model-module: "espnet.nets.pytorch_backend.e2e_asr_transformer_yzl23_aux_ali:E2E"
 transformer-input-layer: conv2d     # encoder architecture type
 transformer-lr: 5.0
 transformer-warmup-steps: 25000
@@ -43,5 +43,10 @@ transformer-length-normalized-loss: false
 transformer-init: pytorch
 
 # auxiliary model setting
-phn-head-layer: "6"
-mltbeta: "1"
+ali-file: "/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/data/phone/aux/split48/aux_ali"
+ali-sampled: "True"
+aux-pos: "COVOUT"
+aux-only: "False"
+
+# init model
+init-model: "/mnt/lustre/sjtu/home/jqg01/asr/e2e/cs/egs/codeswitching/asr/exp/ddp_all_data/lib_percentage/AS2S_base_jca0.2_ddp8_mix200/results/model.last5.avg.best"
