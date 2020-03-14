@@ -129,13 +129,9 @@ class E2E(ASRInterface, torch.nn.Module):
         )
         # gated add module 
         self.vectorize_lambda = args.vectorize_lambda
-        if self.vectorize_lambda:
-            self.aggregation_module = torch.nn.Sequential(
-                torch.nn.Linear(2*args.adim, args.adim),
-                torch.nn.Sigmoid())
-        else:
-            self.aggregation_module = torch.nn.Sequential(
-                torch.nn.Linear(2*args.adim, 1),
+        lambda_dim = args.adim if self.vectorize_lambda else 1
+        self.aggregation_module = torch.nn.Sequential(
+                torch.nn.Linear(2*args.adim, lambda_dim),
                 torch.nn.Sigmoid())
 
         self.decoder = Decoder(
