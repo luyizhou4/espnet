@@ -152,8 +152,9 @@ class E2E(ASRInterface, torch.nn.Module):
         # yzl23 config
         # the encoder is enlarged to 2*adim, 
         # thus a layer-norm affine transformation is needed
-        self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=True)
-        self.enc_proj_ln = LayerNorm(args.adim) # compatible with previous
+        # self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=True)
+        # self.enc_proj_ln = LayerNorm(args.adim) # compatible with previous
+        self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=False)
 
         # espnet CTC decoding-bug, remove blank in prefix-decoding
         self.remove_blank_in_ctc_mode = True
@@ -200,7 +201,8 @@ class E2E(ASRInterface, torch.nn.Module):
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
         # encoder proj 
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        # hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        hs_pad = self.enc_proj(hs_pad)
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -274,7 +276,8 @@ class E2E(ASRInterface, torch.nn.Module):
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0) # (B, T, D) with #B=1
         enc_output, _ = self.encoder(x, None)
-        enc_output = self.enc_proj_ln(self.enc_proj(enc_output))
+        # enc_output = self.enc_proj_ln(self.enc_proj(enc_output))
+        enc_output = self.enc_proj(enc_output)
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -287,7 +290,8 @@ class E2E(ASRInterface, torch.nn.Module):
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
         hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        # hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        hs_pad = self.enc_proj(hs_pad)
         penultimate_state = hs_pad
         # forward decoder
         # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)

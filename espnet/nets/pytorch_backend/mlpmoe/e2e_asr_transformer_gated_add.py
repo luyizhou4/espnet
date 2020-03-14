@@ -85,6 +85,9 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained en ctc model')
         group.add_argument('--pretrained-mlme-model', default='', type=str,
                          help='pretrained multi-lingual multi-encoder model')
+        # gated-add lambda_ vectorization
+        group.add_argument('--vectorize-lambda', default=False, type=strtobool,
+                         help='vectorize lambda for encoder fusion')
         return parser
 
     @property
@@ -125,9 +128,16 @@ class E2E(ASRInterface, torch.nn.Module):
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
         # gated add module 
-        self.aggregation_module = torch.nn.Sequential(
-            torch.nn.Linear(2*args.adim, 1),
-            torch.nn.Sigmoid())
+        self.vectorize_lambda = args.vectorize_lambda
+        if self.vectorize_lambda:
+            self.aggregation_module = torch.nn.Sequential(
+                torch.nn.Linear(2*args.adim, args.adim),
+                torch.nn.Sigmoid())
+        else:
+            self.aggregation_module = torch.nn.Sequential(
+                torch.nn.Linear(2*args.adim, 1),
+                torch.nn.Sigmoid())
+
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -251,7 +261,7 @@ class E2E(ASRInterface, torch.nn.Module):
             xs = lambda * cn_xs + (1-lambda) * en_xs 
         """
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        lambda_ = self.aggregation_module(hs_pad) # (B,T,1)/(B,T,D), range from (0, 1)
         hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         self.hs_pad = hs_pad
 
