@@ -10,6 +10,7 @@ import logging
 import math
 
 import torch
+import numpy
 
 from espnet.nets.asr_interface import ASRInterface
 from espnet.nets.pytorch_backend.ctc import CTC
