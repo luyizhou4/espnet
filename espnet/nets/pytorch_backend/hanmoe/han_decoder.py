@@ -17,9 +17,9 @@ from espnet.nets.pytorch_backend.transformer.repeat import repeat
 from espnet.nets.scorer_interface import ScorerInterface
 
 # multi-enc related han_decoder_layer
-from espnet.nets.pytorch_backend.hanmoe.han_decoder_layer import DecoderLayer
+from espnet.nets.pytorch_backend.hanmoe.han_decoder_layer import HANDecoderLayer
 
-class Decoder(ScorerInterface, torch.nn.Module):
+class HANDecoder(ScorerInterface, torch.nn.Module):
     """Transfomer decoder module.
 
     :param int odim: output dim
@@ -77,7 +77,7 @@ class Decoder(ScorerInterface, torch.nn.Module):
         self.normalize_before = normalize_before
         self.decoders = repeat(
             num_blocks,
-            lambda: DecoderLayer(
+            lambda: HANDecoderLayer(
                 attention_dim,
                 MultiHeadedAttention(attention_heads, attention_dim, self_attention_dropout_rate),
                 MultiHeadedAttention(attention_heads, attention_dim, src_attention_dropout_rate),

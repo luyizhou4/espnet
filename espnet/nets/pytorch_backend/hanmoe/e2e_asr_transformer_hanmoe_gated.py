@@ -19,7 +19,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.nets_utils import th_accuracy
 from espnet.nets.pytorch_backend.transformer.add_sos_eos import add_sos_eos
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
-from espnet.nets.pytorch_backend.transformer.decoder import Decoder
+# from espnet.nets.pytorch_backend.transformer.decoder import Decoder
 from espnet.nets.pytorch_backend.transformer.encoder import Encoder
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
 from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSmoothingLoss
@@ -27,6 +27,8 @@ from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 
+# HAN decoder
+from espnet.nets.pytorch_backend.hanmoe.han_decoder import HANDecoder
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -82,6 +84,9 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained en ctc model')
         group.add_argument('--pretrained-mlme-model', default='', type=str,
                          help='pretrained multi-lingual multi-encoder model')
+        # gated-add lambda_ vectorization
+        group.add_argument('--vectorize-lambda', default=False, type=strtobool,
+                         help='vectorize lambda for encoder fusion')
         return parser
 
     @property
@@ -121,7 +126,14 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
-        self.decoder = Decoder(
+        # gated add module 
+        self.vectorize_lambda = args.vectorize_lambda
+        lambda_dim = args.adim if self.vectorize_lambda else 1
+        self.aggregation_module = torch.nn.Sequential(
+                torch.nn.Linear(2*args.adim, lambda_dim),
+                torch.nn.Sigmoid())
+
+        self.decoder = HANDecoder(
             odim=odim,
             attention_dim=args.adim,
             attention_heads=args.aheads,
@@ -146,7 +158,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
         if args.mtlalpha > 0.0:
-            self.ctc = CTC(odim, 2*args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
+            self.ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
         else:
             self.ctc = None
 
@@ -164,13 +176,13 @@ class E2E(ASRInterface, torch.nn.Module):
         self.reset_parameters(args) # reset params at the last
 
         logging.warning("Model total size: {}M, requires_grad size: {}M"
-                .format(self.count_parameters() / 1e6, self.count_parameters(requires_grad=True) / 1e6))
+                .format(self.count_parameters(), self.count_parameters(requires_grad=True)))
 
     def count_parameters(self, requires_grad=False):
         if requires_grad:
-            return sum(p.numel() for p in self.parameters() if p.requires_grad)
+            return sum(p.numel() for p in self.parameters() if p.requires_grad) / 1024 / 1024
         else:
-            return sum(p.numel() for p in self.parameters())
+            return sum(p.numel() for p in self.parameters()) / 1024 / 1024
 
     def reset_parameters(self, args):
         """Initialize parameters."""
@@ -202,10 +214,6 @@ class E2E(ASRInterface, torch.nn.Module):
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
             else:
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
-            # remove ctc_lo here, shape mismatch
-            for k in list(model_state_dict.keys()):
-                if 'ctc_lo' in k:
-                    del model_state_dict[k]
             self.load_state_dict(model_state_dict, strict=False)
             del model_state_dict
         elif args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
@@ -243,8 +251,13 @@ class E2E(ASRInterface, torch.nn.Module):
         # mlp moe forward
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        # concat & mlp 
+        # gated add module 
+        """ lambda = sigmoid(W_cn * cn_xs + w_en * en_xs + b)  #(B, T, 1)
+            xs = lambda * cn_xs + (1-lambda) * en_xs 
+        """
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        lambda_ = self.aggregation_module(hs_pad) # (B,T,1)/(B,T,D), range from (0, 1)
+        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -255,9 +268,9 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, 2*self.adim), hs_len, ys_pad)
+            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
             if self.error_calculator is not None:
-                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, 2*self.adim)).data
+                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
                 cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
 
         if self.mtlalpha == 1:
@@ -316,6 +329,14 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
+        lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
+        enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
+        
+        # inverse lambda decode 
+        # first round lambda_ params to 0/1
+        # lambda_ = lambda_.round()
+        # enc_output = (1 - lambda_) * cn_enc_output + lambda_ * en_enc_output
+        
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -331,7 +352,10 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad, hs_pad), dim=-1)
+
+        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
+        penultimate_state = lambda_
         # self.hs_pad = hs_pad
 
         # forward decoder

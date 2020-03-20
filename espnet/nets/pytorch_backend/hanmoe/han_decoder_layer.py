@@ -12,7 +12,7 @@ from torch import nn
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
 
-class DecoderLayer(nn.Module):
+class HANDecoderLayer(nn.Module):
     """Single decoder layer module.
 
     :param int size: input dim
