@@ -51,7 +51,8 @@ class HANDecoder(ScorerInterface, torch.nn.Module):
                  use_output_layer=True,
                  pos_enc_class=PositionalEncoding,
                  normalize_before=True,
-                 concat_after=False):
+                 concat_after=False,
+                 moe_att_mode='linear'):
         """Construct an Decoder object."""
         torch.nn.Module.__init__(self)
         if input_layer == "embed":
@@ -81,10 +82,12 @@ class HANDecoder(ScorerInterface, torch.nn.Module):
                 attention_dim,
                 MultiHeadedAttention(attention_heads, attention_dim, self_attention_dropout_rate),
                 MultiHeadedAttention(attention_heads, attention_dim, src_attention_dropout_rate),
+                MultiHeadedAttention(attention_heads, attention_dim, src_attention_dropout_rate),
                 PositionwiseFeedForward(attention_dim, linear_units, dropout_rate),
-                dropout_rate,
-                normalize_before,
-                concat_after
+                dropout_rate=dropout_rate,
+                moe_att_mode=moe_att_mode,
+                normalize_before=normalize_before,
+                concat_after=concat_after,
             )
         )
         if self.normalize_before:
@@ -128,7 +131,7 @@ class HANDecoder(ScorerInterface, torch.nn.Module):
             return x, tgt_mask, penultimate_state
         return x, tgt_mask
 
-    def forward_one_step(self, tgt, tgt_mask, memory, cache=None):
+    def forward_one_step(self, tgt, tgt_mask, cn_memory, en_memory, cache=None):
         """Forward one step.
 
         :param torch.Tensor tgt: input token ids, int64 (batch, maxlen_out)
@@ -146,7 +149,7 @@ class HANDecoder(ScorerInterface, torch.nn.Module):
             cache = self.init_state()
         new_cache = []
         for c, decoder in zip(cache, self.decoders):
-            x, tgt_mask, memory, memory_mask = decoder(x, tgt_mask, memory, None, cache=c)
+            x, tgt_mask, cn_memory, en_memory, memory_mask = decoder(x, tgt_mask, cn_memory, en_memory, None, cache=c)
             new_cache.append(x)
         if self.normalize_before:
             y = self.after_norm(x[:, -1])

@@ -87,6 +87,8 @@ class E2E(ASRInterface, torch.nn.Module):
         # gated-add lambda_ vectorization
         group.add_argument('--vectorize-lambda', default=False, type=strtobool,
                          help='vectorize lambda for encoder fusion')
+        group.add_argument('--moe-att-mode', default="linear", type=str,
+                         help='han decoder att mode')
         return parser
 
     @property
@@ -142,8 +144,10 @@ class E2E(ASRInterface, torch.nn.Module):
             dropout_rate=args.dropout_rate,
             positional_dropout_rate=args.dropout_rate,
             self_attention_dropout_rate=args.transformer_attn_dropout_rate,
-            src_attention_dropout_rate=args.transformer_attn_dropout_rate
+            src_attention_dropout_rate=args.transformer_attn_dropout_rate,
+            moe_att_mode=args.moe_att_mode
         )
+        logging.warning('HANMoE att_mode: {}'.format(args.moe_att_mode))
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -279,7 +283,8 @@ class E2E(ASRInterface, torch.nn.Module):
             # 2. forward decoder
             ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
             ys_mask = target_mask(ys_in_pad, self.ignore_id)
-            pred_pad, pred_mask = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask)
+            pred_pad, pred_mask = self.decoder(ys_in_pad, ys_mask, cn_hs_pad, 
+                                        en_hs_pad, hs_mask)
             self.pred_pad = pred_pad
 
             # 3. compute attention loss
@@ -336,8 +341,7 @@ class E2E(ASRInterface, torch.nn.Module):
         # first round lambda_ params to 0/1
         # lambda_ = lambda_.round()
         # enc_output = (1 - lambda_) * cn_enc_output + lambda_ * en_enc_output
-        
-        return enc_output.squeeze(0) # returns tensor(T, D)
+        return enc_output, cn_enc_output, en_enc_output # returns tensor(1, T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         if recog_args.ctc_greedy_decoding:
@@ -374,7 +378,7 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results (fake results for compatibility)
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
+        enc_output, _, _ = self.encode(x) # (1, T, D)
         lpz = self.ctc.log_softmax(enc_output)
         lpz = lpz.squeeze(0) # shape of (T, D)
         idx = lpz.argmax(-1).cpu().numpy().tolist()
@@ -408,7 +412,7 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
+        enc_output, cn_enc_output, en_enc_output = self.encode(x) # (1, T, D)
         if recog_args.ctc_weight > 0.0:
             lpz = self.ctc.log_softmax(enc_output)
             lpz = lpz.squeeze(0) # shape of (T, D)
@@ -478,10 +482,10 @@ class E2E(ASRInterface, torch.nn.Module):
                 if use_jit:
                     if traced_decoder is None:
                         traced_decoder = torch.jit.trace(self.decoder.forward_one_step,
-                                                         (ys, ys_mask, enc_output))
-                    local_att_scores = traced_decoder(ys, ys_mask, enc_output)[0]
+                                                         (ys, ys_mask, cn_enc_output, en_enc_output))
+                    local_att_scores = traced_decoder(ys, ys_mask, cn_enc_output, en_enc_output)[0]
                 else:
-                    local_att_scores = self.decoder.forward_one_step(ys, ys_mask, enc_output)[0]
+                    local_att_scores = self.decoder.forward_one_step(ys, ys_mask, cn_enc_output, en_enc_output)[0]
                 if rnnlm:
                     rnnlm_state, local_lm_scores = rnnlm.predict(hyp['rnnlm_prev'], vy)
                     local_scores = local_att_scores + recog_args.lm_weight * local_lm_scores

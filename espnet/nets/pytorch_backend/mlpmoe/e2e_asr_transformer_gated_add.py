@@ -88,6 +88,9 @@ class E2E(ASRInterface, torch.nn.Module):
         # gated-add lambda_ vectorization
         group.add_argument('--vectorize-lambda', default=False, type=strtobool,
                          help='vectorize lambda for encoder fusion')
+        # this is used to keep mandarin performance
+        group.add_argument('--pretrained-cn-jca-model', default='', type=str,
+                         help='pretrained cn jca model')
         return parser
 
     @property
@@ -205,6 +208,19 @@ class E2E(ASRInterface, torch.nn.Module):
                     model_state_dict[new_k] = model_state_dict.pop(k)
             return model_state_dict
         
+        def load_state_dict_all(path, prefix=''):
+            if 'snapshot' in path:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
+            else:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            for k in list(model_state_dict.keys()):
+                if not 'encoder' in k:
+                    continue
+                else:
+                    new_k = k.replace('encoder.', prefix + 'encoder.')
+                    model_state_dict[new_k] = model_state_dict.pop(k)
+            return model_state_dict
+        
         # initialize parameters
         if args.pretrained_mlme_model:
             logging.warning("loading pretrained mlme model for parallel encoder")
@@ -229,6 +245,17 @@ class E2E(ASRInterface, torch.nn.Module):
                                                         prefix='en_')
             self.load_state_dict(en_state_dict, strict=False)
             del en_state_dict
+        elif args.pretrained_cn_jca_model and args.pretrained_en_ctc_model:
+            logging.warning("loading pretrained cn-jca & en-ctc model for parallel encoder")
+            initialize(self, args.transformer_init)
+            en_state_dict = load_state_dict_encoder(args.pretrained_en_ctc_model, 
+                                                        prefix='en_')
+            self.load_state_dict(en_state_dict, strict=False)
+            del en_state_dict
+            cn_state_dict = load_state_dict_all(args.pretrained_cn_jca_model, 
+                                                        prefix='cn_')
+            self.load_state_dict(cn_state_dict, strict=False)
+            del cn_state_dict
         else:
             initialize(self, args.transformer_init)
 

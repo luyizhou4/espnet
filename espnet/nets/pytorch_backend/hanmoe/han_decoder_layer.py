@@ -8,8 +8,52 @@
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
+
+
+class MoEAttn(nn.Module):
+    def __init__(self, size, cn_src_attn, en_src_attn, mode='linear'):
+        """Construct an HANMoE src attention object."""
+        super(MoEAttn, self).__init__()
+        self.cn_src_attn = cn_src_attn
+        self.en_src_attn = en_src_attn
+        self.mode = mode
+        if mode == 'linear':
+            self.linear_mixer = nn.Sequential(
+                nn.Linear(3*size, 1),
+                nn.Sigmoid())
+        elif mode == 'han_dot':
+            # han_mixer using x as 'query'
+            self.scaling = 2.0
+            self.mlp_cn = nn.Sequential(nn.Linear(size, size),
+                                        nn.Tanh())
+            self.mlp_en = nn.Sequential(nn.Linear(size, size),
+                                        nn.Tanh())
+            self.mlp_x = nn.Sequential(nn.Linear(size, size),
+                                        nn.Tanh())
+        else:
+            raise Exception('Not implemented method for HANMoE src_attn type {}'.format(mode))
+
+    def forward(self, x, cn_memory, en_memory, memory_mask):
+        cn_att_c = self.cn_src_attn(x, cn_memory, cn_memory, memory_mask)
+        en_att_c = self.en_src_attn(x, en_memory, en_memory, memory_mask)
+        # here we mix two att context
+        if self.mode == "linear":
+            han_att_c = torch.cat((cn_att_c, en_att_c, x), dim=-1)
+            lambda_ = self.linear_mixer(han_att_c) # (B,U,1), range from (0, 1)
+            han_att_c = lambda_ * cn_att_c + (1 - lambda_) * en_att_c
+        elif self.mode == 'han_dot':
+            q = self.mlp_x(x) # (B,U,D)
+            k_cn = self.mlp_cn(cn_att_c)
+            k_en = self.mlp_en(en_att_c)
+            e = torch.cat((torch.sum(q * k_cn, dim=-1).unsqueeze(-1),
+                torch.sum(q * k_en, dim=-1).unsqueeze(-1)), dim=-1) # (B,U,2)
+            lambda_ = F.softmax(self.scaling * e, dim=-1).unsqueeze(-1) # (B,U,2,1)
+            han_att_c = lambda_[:,:,0] * cn_att_c + lambda_[:,:,1] * en_att_c
+
+        return han_att_c
 
 
 class HANDecoderLayer(nn.Module):
@@ -28,13 +72,13 @@ class HANDecoderLayer(nn.Module):
 
     """
 
-    def __init__(self, size, self_attn, src_attn, feed_forward, dropout_rate,
+    def __init__(self, size, self_attn, cn_src_attn, en_src_attn, feed_forward, dropout_rate,
+                 moe_att_mode='linear',
                  normalize_before=True, concat_after=False):
         """Construct an DecoderLayer object."""
-        super(DecoderLayer, self).__init__()
+        super(HANDecoderLayer, self).__init__()
         self.size = size
         self.self_attn = self_attn
-        self.src_attn = src_attn
         self.feed_forward = feed_forward
         self.norm1 = LayerNorm(size)
         self.norm2 = LayerNorm(size)
@@ -47,7 +91,10 @@ class HANDecoderLayer(nn.Module):
             self.concat_linear2 = nn.Linear(size + size, size)
 
         # Hierarchical attention
-        
+        self.cn_src_attn = cn_src_attn
+        self.en_src_attn = en_src_attn
+        self.src_attn = MoEAttn(size, cn_src_attn, en_src_attn, moe_att_mode)
+
 
     def forward(self, tgt, tgt_mask, cn_memory, en_memory, memory_mask, cache=None):
         """Compute decoded features.
@@ -88,11 +135,12 @@ class HANDecoderLayer(nn.Module):
         residual = x
         if self.normalize_before:
             x = self.norm2(x)
+        # HANMoE here, two src_attn is computed
         if self.concat_after:
-            x_concat = torch.cat((x, self.src_attn(x, memory, memory, memory_mask)), dim=-1)
+            x_concat = torch.cat((x, self.src_attn(x, cn_memory, en_memory, memory_mask)), dim=-1)
             x = residual + self.concat_linear2(x_concat)
         else:
-            x = residual + self.dropout(self.src_attn(x, memory, memory, memory_mask))
+            x = residual + self.dropout(self.src_attn(x, cn_memory, en_memory, memory_mask))
         if not self.normalize_before:
             x = self.norm2(x)
 
@@ -106,4 +154,4 @@ class HANDecoderLayer(nn.Module):
         if cache is not None:
             x = torch.cat([cache, x], dim=1)
 
-        return x, tgt_mask, memory, memory_mask
+        return x, tgt_mask, cn_memory, en_memory, memory_mask
