@@ -147,7 +147,7 @@ class E2E(ASRInterface, torch.nn.Module):
             src_attention_dropout_rate=args.transformer_attn_dropout_rate,
             moe_att_mode=args.moe_att_mode
         )
-        logging.warning('HANMoE att_mode: {}'.format(args.moe_att_mode))
+        # logging.warning('HANMoE att_mode: {}'.format(args.moe_att_mode))
         self.sos = odim - 1
         self.eos = odim - 1
         self.odim = odim
@@ -179,6 +179,8 @@ class E2E(ASRInterface, torch.nn.Module):
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
 
+        # for name, param in self.named_parameters():
+        #     logging.warning(name)
         logging.warning("Model total size: {}M, requires_grad size: {}M"
                 .format(self.count_parameters(), self.count_parameters(requires_grad=True)))
 

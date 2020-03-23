@@ -390,7 +390,7 @@ class E2E(ASRInterface, torch.nn.Module):
         ilens = (((ilens - 1) // 2 - 1) // 2)
         lambda_ = self.aggregation_module(enc_output, ilens) # (B,T,1), range from (0, 1)
         enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
-        
+        # enc_output = en_enc_output
         # inverse lambda decode 
         # first round lambda_ params to 0/1
         # lambda_ = lambda_.round()
