@@ -41,8 +41,8 @@ class MoEAttn(nn.Module):
         en_att_c = self.en_src_attn(x, en_memory, en_memory, memory_mask)
         # here we mix two att context
         if self.mode == "linear":
-            han_att_c = torch.cat((cn_att_c, en_att_c, x), dim=-1)
-            lambda_ = self.linear_mixer(han_att_c) # (B,U,1), range from (0, 1)
+            # (B,U,1), range from (0, 1)
+            lambda_ = self.linear_mixer(torch.cat((cn_att_c, en_att_c, x), dim=-1)) 
             han_att_c = lambda_ * cn_att_c + (1 - lambda_) * en_att_c
         elif self.mode == 'han_dot':
             q = self.mlp_x(x) # (B,U,D)
@@ -91,7 +91,7 @@ class HANDecoderLayer(nn.Module):
             self.concat_linear2 = nn.Linear(size + size, size)
 
         # Hierarchical attention
-        self.cn_src_attn = cn_src_attn
+        self.cn_src_attn = cn_src_attn # declare attn here for initialization
         self.en_src_attn = en_src_attn
         self.src_attn = MoEAttn(size, cn_src_attn, en_src_attn, moe_att_mode)
 

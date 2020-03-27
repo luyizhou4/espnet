@@ -409,6 +409,7 @@ def train(args):
         args (namespace): The program arguments.
 
     """
+    raise Exception("Previous BNF exps usage, deprecated now.")
     set_deterministic_pytorch(args)
     if args.num_encs > 1:
         args = format_mulenc_args(args)
@@ -727,6 +728,7 @@ def recog(args):
     Args:
         args (namespace): The program arguments.
     """
+    raise Exception("Previous BNF exps usage, deprecated now.")
     set_deterministic_pytorch(args)
     model, train_args = load_trained_model(args.model)
     assert isinstance(model, ASRInterface)
