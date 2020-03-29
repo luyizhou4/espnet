@@ -283,7 +283,7 @@ class CustomConverterMoE(object):
         # CN_outputs(B, Tmax, D) * CN_coe(B, Tmax, 1) + EN_outputs(B, Tmax, D) * EN_coe(B, Tmax, 1)
         moe_coe_lens = np.array([x.shape[0] for x in moe_coes]) # for data parallel
         moe_coe_lens = torch.from_numpy(moe_coe_lens).to(device)
-        moe_coes = pad_list([torch.from_numpy(x).float() for x in moe_coes], 0).to(device, dtype=self.dtype)
+        moe_coes = pad_list([torch.from_numpy(x).float() for x in moe_coes], self.ignore_id).to(device, dtype=self.dtype)
         return xs_pad, ilens, ys_pad, moe_coes, moe_coe_lens
 
 

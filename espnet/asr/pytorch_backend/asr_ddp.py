@@ -286,7 +286,7 @@ class CustomConverterMoE(object):
         # CN_outputs(B, Tmax, D) * CN_coe(B, Tmax, 1) + EN_outputs(B, Tmax, D) * EN_coe(B, Tmax, 1)
         moe_coe_lens = np.array([x.shape[0] for x in moe_coes]) # for data parallel
         moe_coe_lens = torch.from_numpy(moe_coe_lens).to(device)
-        moe_coes = pad_list([torch.from_numpy(x).float() for x in moe_coes], 0).to(device, dtype=self.dtype)
+        moe_coes = pad_list([torch.from_numpy(x).float() for x in moe_coes], self.ignore_id).to(device, dtype=self.dtype)
         return xs_pad, ilens, ys_pad, moe_coes, moe_coe_lens
 
 
@@ -700,8 +700,10 @@ def train(args):
                 trigger=(args.report_interval_iters, 'iteration'))
             report_keys.append('eps')
         # lid mtl
-        if args.log_lid_mtl_acc: # yzl23: this is used only in module e2e_asr_transformer_lid:E2E
-            assert 'e2e_asr_transformer_lid:E2E' in args.model_module
+        if args.log_lid_mtl_acc: 
+            # yzl23: this is used in module:
+            # e2e_asr_transformer_lid:E2E / e2e_asr_transformer_gated_add_lid:E2E
+            assert 'lid' in args.model_module
             report_keys.extend(['main/lid_acc', 'validation/main/lid_acc'])
         if args.report_cer:
             report_keys.append('validation/main/cer')
