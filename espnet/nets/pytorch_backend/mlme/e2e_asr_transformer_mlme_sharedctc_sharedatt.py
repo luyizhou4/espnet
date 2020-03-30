@@ -82,6 +82,9 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained en ctc model')
         group.add_argument('--pretrained-cn-jca-model', default='', type=str,
                          help='pretrained cn jca model')
+        # interpolation coefficient to moe_coe
+        group.add_argument('--interpolation-coe', default=0.0, type=float,
+                           help='interpolation coefficient for moe_coe')
         return parser
 
     @property
@@ -160,6 +163,8 @@ class E2E(ASRInterface, torch.nn.Module):
         self.rnnlm = None
 
         # yzl23 config
+        self.interp_factor = args.interpolation_coe
+        logging.warning("Interpolated moe_coes with {}".format(self.interp_factor))
         self.remove_blank_in_ctc_mode = True
         self.reset_parameters(args) # reset params at the last
         logging.warning("Model total size: {}M, requires_grad size: {}M"
@@ -246,6 +251,10 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         # 1. forward encoder
         moe_coes = moe_coes[:, :max(moe_coe_lens)] # for data parallel
+        # here we use interpolation_coe to 'fix' initial moe_coes
+        interp_factor = self.interp_factor  # 0.1 for example, similar to lsm
+        moe_coes = (1-interp_factor) * moe_coes + interp_factor / moe_coes.shape[2] 
+
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
         
@@ -324,6 +333,9 @@ class E2E(ASRInterface, torch.nn.Module):
         fbank_feats, moe_coe = x
         x = torch.as_tensor(fbank_feats).unsqueeze(0) # (B, T, D) with #B=1
         moe_coe = torch.as_tensor(moe_coe).unsqueeze(0)
+        # transform moe_coe
+        interp_factor = self.interp_factor  # 0.1 for example, similar to lsm
+        moe_coe = (1-interp_factor) * moe_coe + interp_factor / moe_coe.shape[2] 
 
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
@@ -344,14 +356,15 @@ class E2E(ASRInterface, torch.nn.Module):
         # multi-encoder forward
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        moe_coes = moe_coes.unsqueeze(-1)
-        hs_pad = cn_hs_pad * moe_coes[:, :, 1] + en_hs_pad * moe_coes[:, :, 0]
-        self.hs_pad = hs_pad
-
-        # forward decoder
-        ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-        ys_mask = target_mask(ys_in_pad, self.ignore_id)
-        pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
+        # moe_coes = moe_coes.unsqueeze(-1)
+        # hs_pad = cn_hs_pad * moe_coes[:, :, 1] + en_hs_pad * moe_coes[:, :, 0]
+        # self.hs_pad = hs_pad
+        
+        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        # # forward decoder
+        # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+        # ys_mask = target_mask(ys_in_pad, self.ignore_id)
+        # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
 
         # plot penultimate_state, (B,T,att_dim)
         return penultimate_state.squeeze(0).detach().cpu().numpy()
