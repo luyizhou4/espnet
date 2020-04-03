@@ -26,8 +26,10 @@ from espnet.nets.pytorch_backend.transformer.label_smoothing_loss import LabelSm
 from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.mask import target_mask
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
-from espnet.nets.scorers.ctc import CTCPrefixScorer
 
+# encoder output proj-layer layer norm, self-defined LN changes eps from 1e-5 to 1e-12
+# we just keep this usage as initial espnet setup
+from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
@@ -76,10 +78,13 @@ class E2E(ASRInterface, torch.nn.Module):
                            help='Number of decoder layers')
         group.add_argument('--dunits', default=320, type=int,
                            help='Number of decoder hidden units')
-
-        # yzl23 config 
-        group.add_argument('--pretrained-jca-model', default='', type=str,
-                           help='pretrained-jca-model path')
+        # ctc init path
+        group.add_argument('--pretrained-cn-ctc-model', default='', type=str,
+                         help='pretrained cn ctc model')
+        group.add_argument('--pretrained-en-ctc-model', default='', type=str,
+                         help='pretrained en ctc model')
+        group.add_argument('--pretrained-mlme-model', default='', type=str,
+                         help='pretrained multi-lingual multi-encoder model')
         return parser
 
     @property
@@ -97,7 +102,7 @@ class E2E(ASRInterface, torch.nn.Module):
         torch.nn.Module.__init__(self)
         if args.transformer_attn_dropout_rate is None:
             args.transformer_attn_dropout_rate = args.dropout_rate
-        self.encoder = Encoder(
+        self.cn_encoder = Encoder(
             idim=idim,
             attention_dim=args.adim,
             attention_heads=args.aheads,
@@ -108,6 +113,19 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
+        self.en_encoder = Encoder(
+            idim=idim,
+            attention_dim=args.adim,
+            attention_heads=args.aheads,
+            linear_units=args.eunits,
+            num_blocks=args.elayers,
+            input_layer=args.transformer_input_layer,
+            dropout_rate=args.dropout_rate,
+            positional_dropout_rate=args.dropout_rate,
+            attention_dropout_rate=args.transformer_attn_dropout_rate
+        )
+        self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=True)
+        self.enc_proj_ln = LayerNorm(args.adim) # compatible with previous
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -161,18 +179,52 @@ class E2E(ASRInterface, torch.nn.Module):
 
     def reset_parameters(self, args):
         """Initialize parameters."""
+        
+        # load state_dict, and keeps only encoder part
+        # note that self.ctc.ctc_lo is also removed
+        # prefix is added to meet the needs of moe structure
+        def load_state_dict_encoder(path, prefix=''):
+            if 'snapshot' in path:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
+            else:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            for k in list(model_state_dict.keys()):
+                if not 'encoder' in k:
+                    # remove this key
+                    del model_state_dict[k]
+                else:
+                    new_k = k.replace('encoder.', prefix + 'encoder.')
+                    model_state_dict[new_k] = model_state_dict.pop(k)
+            return model_state_dict
+        
         # initialize parameters
-        if args.pretrained_jca_model:
-            path = args.pretrained_jca_model
-            logging.warning("load pretrained asr model from {}".format(path))
+        if args.pretrained_mlme_model:
+            logging.warning("loading pretrained mlme model for parallel encoder")
+            # still need to initialize the 'other' params
+            initialize(self, args.transformer_init)
+            path = args.pretrained_mlme_model
             if 'snapshot' in path:
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
             else:
                 model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
             self.load_state_dict(model_state_dict, strict=False)
             del model_state_dict
+        elif args.pretrained_cn_ctc_model and args.pretrained_en_ctc_model:
+            logging.warning("loading pretrained ctc model for parallel encoder")
+            # still need to initialize the 'other' params
+            initialize(self, args.transformer_init)
+            cn_state_dict = load_state_dict_encoder(args.pretrained_cn_ctc_model, 
+                                                        prefix='cn_')
+            self.load_state_dict(cn_state_dict, strict=False)
+            del cn_state_dict
+            en_state_dict = load_state_dict_encoder(args.pretrained_en_ctc_model, 
+                                                        prefix='en_')
+            self.load_state_dict(en_state_dict, strict=False)
+            del en_state_dict
         else:
             initialize(self, args.transformer_init)
+
+
     def forward(self, xs_pad, ilens, ys_pad):
         """E2E forward.
 
@@ -189,7 +241,12 @@ class E2E(ASRInterface, torch.nn.Module):
         # 1. forward encoder
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        # mlp moe forward
+        cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
+        en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
+        # concat & mlp 
+        hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -249,10 +306,6 @@ class E2E(ASRInterface, torch.nn.Module):
             logging.warning('loss (=%f) is not correct', loss_data)
         return self.loss
 
-    def scorers(self):
-        """Scorers."""
-        return dict(decoder=self.decoder, ctc=CTCPrefixScorer(self.ctc, self.eos))
-
     def encode(self, x):
         """Encode acoustic features.
 
@@ -262,7 +315,10 @@ class E2E(ASRInterface, torch.nn.Module):
         """
         self.eval()
         x = torch.as_tensor(x).unsqueeze(0) # (B, T, D) with #B=1
-        enc_output, _ = self.encoder(x, None)
+        cn_enc_output, _ = self.cn_encoder(x, None)
+        en_enc_output, _ = self.en_encoder(x, None)
+        enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
+        enc_output = self.enc_proj_ln(self.enc_proj(enc_output))
         return enc_output.squeeze(0) # returns tensor(T, D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
@@ -271,28 +327,24 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
 
-    # def store_penultimate_state(self, xs_pad, ilens, ys_pad):
-    #     xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
-    #     src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-    #     hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
-    #     # penultimate_state = hs_pad
-    #     # forward decoder
-    #     ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-    #     ys_mask = target_mask(ys_in_pad, self.ignore_id)
-    #     pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
-
-    #     # plot penultimate_state, (B,T,att_dim)
-    #     return penultimate_state.squeeze(0).detach().cpu().numpy()
-
     def store_penultimate_state(self, xs_pad, ilens, ys_pad):
-        with torch.no_grad():
-            self.forward(xs_pad, ilens, ys_pad)
-        for name, m in self.named_modules():
-            if isinstance(m, MultiHeadedAttention) and "decoders.5.src_attn" in name:
-                penultimate_state = m.att_context.cpu().numpy()
+        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
+        src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
+        # multi-encoder forward
+        cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
+        en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
+        hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad, hs_pad), dim=-1)
+        # self.hs_pad = hs_pad
+
+        # forward decoder
+        # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+        # ys_mask = target_mask(ys_in_pad, self.ignore_id)
+        # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
 
         # plot penultimate_state, (B,T,att_dim)
-        return penultimate_state.squeeze(0)
+        return penultimate_state.squeeze(0).detach().cpu().numpy()
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.
