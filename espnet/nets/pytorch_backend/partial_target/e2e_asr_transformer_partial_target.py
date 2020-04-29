@@ -31,6 +31,13 @@ from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 # we just keep this usage as initial espnet setup
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
+def partial_target(ys_pad, divider):
+    cn_ys = [y[y >= divider] for y in ys_pad]
+    en_ys = [y[y < divider] for y in ys_pad]
+    return cn_ys, en_ys
+
+
+
 class E2E(ASRInterface, torch.nn.Module):
     """E2E module.
 
@@ -85,6 +92,12 @@ class E2E(ASRInterface, torch.nn.Module):
                          help='pretrained en ctc model')
         group.add_argument('--pretrained-mlme-model', default='', type=str,
                          help='pretrained multi-lingual multi-encoder model')
+        # gated-add lambda_ vectorization
+        group.add_argument('--vectorize-lambda', default=False, type=strtobool,
+                         help='vectorize lambda for encoder fusion')
+        # this is used to keep mandarin performance
+        group.add_argument('--pretrained-cn-jca-model', default='', type=str,
+                         help='pretrained cn jca model')
         return parser
 
     @property
@@ -124,8 +137,14 @@ class E2E(ASRInterface, torch.nn.Module):
             positional_dropout_rate=args.dropout_rate,
             attention_dropout_rate=args.transformer_attn_dropout_rate
         )
-        self.enc_proj = torch.nn.Linear(2*args.adim, args.adim, bias=True)
-        self.enc_proj_ln = LayerNorm(args.adim) # compatible with previous
+        # gated add module 
+        self.vectorize_lambda = args.vectorize_lambda
+        lambda_dim = args.adim if self.vectorize_lambda else 1
+        self.aggregation_module = torch.nn.Sequential(
+                torch.nn.Linear(2*args.adim, lambda_dim),
+                torch.nn.Sigmoid())
+        self.language_divider = 1000
+
         self.decoder = Decoder(
             odim=odim,
             attention_dim=args.adim,
@@ -151,17 +170,12 @@ class E2E(ASRInterface, torch.nn.Module):
         self.adim = args.adim
         self.mtlalpha = args.mtlalpha
         if args.mtlalpha > 0.0:
-            self.ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
+            self.cn_ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
+            self.en_ctc = CTC(odim, args.adim, args.dropout_rate, ctc_type=args.ctc_type, reduce=True)
         else:
-            self.ctc = None
+            self.cn_ctc = None
+            self.en_ctc = None
 
-        if args.report_cer or args.report_wer:
-            from espnet.nets.e2e_asr_common import ErrorCalculator
-            self.error_calculator = ErrorCalculator(args.char_list,
-                                                    args.sym_space, args.sym_blank,
-                                                    args.report_cer, args.report_wer)
-        else:
-            self.error_calculator = None
         self.rnnlm = None
 
         # yzl23 config
@@ -197,6 +211,19 @@ class E2E(ASRInterface, torch.nn.Module):
                     model_state_dict[new_k] = model_state_dict.pop(k)
             return model_state_dict
         
+        def load_state_dict_all(path, prefix=''):
+            if 'snapshot' in path:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)['model']
+            else:
+                model_state_dict = torch.load(path, map_location=lambda storage, loc: storage)
+            for k in list(model_state_dict.keys()):
+                if not 'encoder' in k:
+                    continue
+                else:
+                    new_k = k.replace('encoder.', prefix + 'encoder.')
+                    model_state_dict[new_k] = model_state_dict.pop(k)
+            return model_state_dict
+        
         # initialize parameters
         if args.pretrained_mlme_model:
             logging.warning("loading pretrained mlme model for parallel encoder")
@@ -221,6 +248,17 @@ class E2E(ASRInterface, torch.nn.Module):
                                                         prefix='en_')
             self.load_state_dict(en_state_dict, strict=False)
             del en_state_dict
+        elif args.pretrained_cn_jca_model and args.pretrained_en_ctc_model:
+            logging.warning("loading pretrained cn-jca & en-ctc model for parallel encoder")
+            initialize(self, args.transformer_init)
+            en_state_dict = load_state_dict_encoder(args.pretrained_en_ctc_model, 
+                                                        prefix='en_')
+            self.load_state_dict(en_state_dict, strict=False)
+            del en_state_dict
+            cn_state_dict = load_state_dict_all(args.pretrained_cn_jca_model, 
+                                                        prefix='cn_')
+            self.load_state_dict(cn_state_dict, strict=False)
+            del cn_state_dict
         else:
             initialize(self, args.transformer_init)
 
@@ -242,11 +280,16 @@ class E2E(ASRInterface, torch.nn.Module):
         xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
         src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
         # mlp moe forward
-        cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
-        en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        # concat & mlp 
+        cn_hs_pad, cn_hs_mask = self.cn_encoder(xs_pad, src_mask)
+        en_hs_pad, en_hs_mask = self.en_encoder(xs_pad, src_mask)
+        hs_mask = cn_hs_mask # cn_hs_mask & en_hs_mask are identical
+        # gated add module 
+        """ lambda = sigmoid(W_cn * cn_xs + w_en * en_xs + b)  #(B, T, 1)
+            xs = lambda * cn_xs + (1-lambda) * en_xs 
+        """
         hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
+        lambda_ = self.aggregation_module(hs_pad) # (B,T,1)/(B,T,D), range from (0, 1)
+        hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         self.hs_pad = hs_pad
 
         # TODO(karita) show predicted text
@@ -257,10 +300,13 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             batch_size = xs_pad.size(0)
             hs_len = hs_mask.view(batch_size, -1).sum(1)
-            loss_ctc = self.ctc(hs_pad.view(batch_size, -1, self.adim), hs_len, ys_pad)
-            if self.error_calculator is not None:
-                ys_hat = self.ctc.argmax(hs_pad.view(batch_size, -1, self.adim)).data
-                cer_ctc = self.error_calculator(ys_hat.cpu(), ys_pad.cpu(), is_ctc=True)
+
+            # divide ys_pad into cn_ys & en_ys; 
+            # note that this target can directly pass to ctc module
+            cn_ys, en_ys = partial_target(ys_pad, self.language_divider)
+            cn_loss_ctc = self.cn_ctc(cn_hs_pad.view(batch_size, -1, self.adim), hs_len, cn_ys)
+            en_loss_ctc = self.en_ctc(en_hs_pad.view(batch_size, -1, self.adim), hs_len, en_ys)
+            loss_ctc = 0.5 * (cn_loss_ctc + en_loss_ctc)
 
         if self.mtlalpha == 1:
             self.loss_att, acc = None, None
@@ -276,13 +322,6 @@ class E2E(ASRInterface, torch.nn.Module):
             acc = th_accuracy(pred_pad.view(-1, self.odim), ys_out_pad,
                                    ignore_label=self.ignore_id)
         self.acc = acc
-
-        # 5. compute cer/wer
-        if self.training or self.error_calculator is None:
-            cer, wer = None, None
-        else:
-            ys_hat = pred_pad.argmax(dim=-1)
-            cer, wer = self.error_calculator(ys_hat.cpu(), ys_pad.cpu())
 
         # copyied from e2e_asr
         alpha = self.mtlalpha
@@ -301,7 +340,7 @@ class E2E(ASRInterface, torch.nn.Module):
 
         loss_data = float(self.loss)
         if loss_data < CTC_LOSS_THRESHOLD and not math.isnan(loss_data):
-            self.reporter.report(loss_ctc_data, loss_att_data, self.acc, cer_ctc, cer, wer, loss_data)
+            self.reporter.report(loss_ctc_data, loss_att_data, self.acc, cer_ctc, None, None, loss_data)
         else:
             logging.warning('loss (=%f) is not correct', loss_data)
         return self.loss
@@ -318,8 +357,15 @@ class E2E(ASRInterface, torch.nn.Module):
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
         enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        enc_output = self.enc_proj_ln(self.enc_proj(enc_output))
-        return enc_output.squeeze(0) # returns tensor(T, D)
+        lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
+        enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
+        
+        # inverse lambda decode 
+        # first round lambda_ params to 0/1
+        # lambda_ = lambda_.round()
+        # enc_output = (1 - lambda_) * cn_enc_output + lambda_ * en_enc_output
+        
+        return enc_output, cn_enc_output, en_enc_output # returns tensor(1,T,D)
 
     def recognize(self, x, recog_args, char_list=None, rnnlm=None, use_jit=False):
         if recog_args.ctc_greedy_decoding:
@@ -327,24 +373,35 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
 
-    def store_penultimate_state(self, xs_pad, ilens, ys_pad):
-        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
-        src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-        # multi-encoder forward
-        cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
-        en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        hs_pad = self.enc_proj_ln(self.enc_proj(hs_pad))
-        penultimate_state = torch.cat((cn_hs_pad, en_hs_pad, hs_pad), dim=-1)
-        # self.hs_pad = hs_pad
+    # def store_penultimate_state(self, xs_pad, ilens, ys_pad):
+    #     xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
+    #     src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
+    #     # multi-encoder forward
+    #     cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
+    #     en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
+    #     hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
 
-        # forward decoder
-        # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-        # ys_mask = target_mask(ys_in_pad, self.ignore_id)
-        # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
+    #     lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+    #     hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
+    #     penultimate_state = lambda_
+    #     # self.hs_pad = hs_pad
+
+    #     # forward decoder
+    #     # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+    #     # ys_mask = target_mask(ys_in_pad, self.ignore_id)
+    #     # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
+
+    #     # plot penultimate_state, (B,T,att_dim)
+    #     return penultimate_state.squeeze(0).detach().cpu().numpy()
+    def store_penultimate_state(self, xs_pad, ilens, ys_pad):
+        with torch.no_grad():
+            self.forward(xs_pad, ilens, ys_pad)
+        for name, m in self.named_modules():
+            if isinstance(m, MultiHeadedAttention) and "decoders.5.src_attn" in name:
+                penultimate_state = m.att_context.cpu().numpy()
 
         # plot penultimate_state, (B,T,att_dim)
-        return penultimate_state.squeeze(0).detach().cpu().numpy()
+        return penultimate_state.squeeze(0)
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.
@@ -354,8 +411,9 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results (fake results for compatibility)
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
-        lpz = self.ctc.log_softmax(enc_output)
+        raise Exception("Not supported for pure ctc decoding")
+        enc_output, cn_enc_output, en_enc_output = self.encode(x) # (1, T, D)
+        lpz = self.cn_ctc.log_softmax(cn_enc_output)
         lpz = lpz.squeeze(0) # shape of (T, D)
         idx = lpz.argmax(-1).cpu().numpy().tolist()
         hyp = {}
@@ -388,12 +446,14 @@ class E2E(ASRInterface, torch.nn.Module):
         :return: N-best decoding results
         :rtype: list
         """
-        enc_output = self.encode(x).unsqueeze(0) # (1, T, D)
+        enc_output, cn_enc_output, en_enc_output = self.encode(x) # (1, T, D)
         if recog_args.ctc_weight > 0.0:
-            lpz = self.ctc.log_softmax(enc_output)
-            lpz = lpz.squeeze(0) # shape of (T, D)
+            cn_lpz = self.cn_ctc.log_softmax(cn_enc_output).squeeze(0) # (T,D)
+            en_lpz = self.en_ctc.log_softmax(en_enc_output).squeeze(0) # (T,D)
+            lpz = cn_lpz
         else:
-            lpz = None
+            cn_lpz = None
+            en_lpz = None
 
         h = enc_output.squeeze(0) # (B, T, D), #B=1
 

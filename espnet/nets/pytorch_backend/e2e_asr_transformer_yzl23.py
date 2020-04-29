@@ -271,28 +271,28 @@ class E2E(ASRInterface, torch.nn.Module):
         else:
             return self.recognize_jca(x, recog_args, char_list, rnnlm, use_jit)
 
-    # def store_penultimate_state(self, xs_pad, ilens, ys_pad):
-    #     xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
-    #     src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
-    #     hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
-    #     # penultimate_state = hs_pad
-    #     # forward decoder
-    #     ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
-    #     ys_mask = target_mask(ys_in_pad, self.ignore_id)
-    #     pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
-
-    #     # plot penultimate_state, (B,T,att_dim)
-    #     return penultimate_state.squeeze(0).detach().cpu().numpy()
-
     def store_penultimate_state(self, xs_pad, ilens, ys_pad):
-        with torch.no_grad():
-            self.forward(xs_pad, ilens, ys_pad)
-        for name, m in self.named_modules():
-            if isinstance(m, MultiHeadedAttention) and "decoders.5.src_attn" in name:
-                penultimate_state = m.att_context.cpu().numpy()
+        xs_pad = xs_pad[:, :max(ilens)]  # for data parallel
+        src_mask = (~make_pad_mask(ilens.tolist())).to(xs_pad.device).unsqueeze(-2)
+        hs_pad, hs_mask = self.encoder(xs_pad, src_mask)
+        penultimate_state = hs_pad
+        # forward decoder
+        # ys_in_pad, ys_out_pad = add_sos_eos(ys_pad, self.sos, self.eos, self.ignore_id)
+        # ys_mask = target_mask(ys_in_pad, self.ignore_id)
+        # pred_pad, pred_mask, penultimate_state = self.decoder(ys_in_pad, ys_mask, hs_pad, hs_mask, return_penultimate_state=True)
 
         # plot penultimate_state, (B,T,att_dim)
-        return penultimate_state.squeeze(0)
+        return penultimate_state.squeeze(0).detach().cpu().numpy()
+
+    # def store_penultimate_state(self, xs_pad, ilens, ys_pad):
+    #     with torch.no_grad():
+    #         self.forward(xs_pad, ilens, ys_pad)
+    #     for name, m in self.named_modules():
+    #         if isinstance(m, MultiHeadedAttention) and "decoders.5.src_attn" in name:
+    #             penultimate_state = m.att_context.cpu().numpy()
+
+    #     # plot penultimate_state, (B,T,att_dim)
+    #     return penultimate_state.squeeze(0)
 
     def recognize_ctc_greedy(self, x, recog_args):
         """Recognize input speech with ctc greedy decoding.

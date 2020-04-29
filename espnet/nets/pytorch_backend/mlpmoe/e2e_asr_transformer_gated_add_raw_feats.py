@@ -134,7 +134,7 @@ class E2E(ASRInterface, torch.nn.Module):
         self.vectorize_lambda = args.vectorize_lambda
         lambda_dim = args.adim if self.vectorize_lambda else 1
         self.aggregation_module = torch.nn.Sequential(
-                torch.nn.Linear(2*args.adim, lambda_dim),
+                torch.nn.Linear(args.adim, lambda_dim),
                 torch.nn.Sigmoid())
 
         self.decoder = Decoder(
@@ -283,8 +283,8 @@ class E2E(ASRInterface, torch.nn.Module):
         """ lambda = sigmoid(W_cn * cn_xs + w_en * en_xs + b)  #(B, T, 1)
             xs = lambda * cn_xs + (1-lambda) * en_xs 
         """
-        hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1)/(B,T,D), range from (0, 1)
+        # hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        lambda_ = self.aggregation_module(xs_pad)[:, :-2:2][:, :-2:2] # (B,T,1)/(B,T,D), range from (0, 1)
         hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         self.hs_pad = hs_pad
 
@@ -356,8 +356,8 @@ class E2E(ASRInterface, torch.nn.Module):
         x = torch.as_tensor(x).unsqueeze(0) # (B, T, D) with #B=1
         cn_enc_output, _ = self.cn_encoder(x, None)
         en_enc_output, _ = self.en_encoder(x, None)
-        enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
-        lambda_ = self.aggregation_module(enc_output) # (B,T,1), range from (0, 1)
+        # enc_output = torch.cat((cn_enc_output, en_enc_output), dim=-1)
+        lambda_ = self.aggregation_module(x)[:, :-2:2][:, :-2:2] # (B,T,1), range from (0, 1)
         enc_output = lambda_ * cn_enc_output + (1 - lambda_) * en_enc_output
         
         # inverse lambda decode 
@@ -379,9 +379,9 @@ class E2E(ASRInterface, torch.nn.Module):
         # multi-encoder forward
         cn_hs_pad, hs_mask = self.cn_encoder(xs_pad, src_mask)
         en_hs_pad, hs_mask = self.en_encoder(xs_pad, src_mask)
-        hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
+        # hs_pad = torch.cat((cn_hs_pad, en_hs_pad), dim=-1)
 
-        lambda_ = self.aggregation_module(hs_pad) # (B,T,1), range from (0, 1)
+        lambda_ = self.aggregation_module(xs_pad)[:, :-2:2][:, :-2:2] # (B,T,1), range from (0, 1)
         hs_pad = lambda_ * cn_hs_pad + (1 - lambda_) * en_hs_pad
         penultimate_state = lambda_
         # self.hs_pad = hs_pad
